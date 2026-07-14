@@ -51,6 +51,10 @@
         <svg class="icon" viewBox="0 0 24 24"><path d="M3 17h4l2-8 3 12 3-9 4 5h2"/></svg>
         <span>Аналитика</span>
       </button>
+      <button class="nav-item" data-view="archived">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v4H4zM5 9h14v11H5z"/><path d="M10 13h4"/></svg>
+        <span>Архив</span>
+      </button>
       <button class="nav-item hidden" data-view="users" id="navUsers">
         <svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="8.5" r="2.5"/><path d="M16 13.2c2.6.4 4.5 2 4.5 5.3"/></svg>
         <span>Пользователи</span>
@@ -131,7 +135,7 @@
           <select class="select" id="filterSource"><option value="">Все источники</option></select>
           <button class="btn btn-secondary" id="exportCandidatesBtn">📤 Экспорт</button>
           <button class="btn btn-secondary" id="importCandidatesBtn">📥 Импорт</button>
-          <input type="file" id="importCandidatesFile" accept=".csv,.json" class="hidden">
+          <input type="file" id="importCandidatesFile" accept=".json" class="hidden">
         </div>
       </div>
       <div class="table-wrap">
@@ -145,6 +149,17 @@
         </table>
         <div class="empty-state hidden" id="candidatesEmpty">Ничего не найдено.</div>
       </div>
+    </section>
+
+    <!-- АРХИВ -->
+    <section class="view" id="view-archived" data-view="archived">
+      <div class="view-header">
+        <h1>Архив кандидатов</h1>
+        <div class="view-controls">
+          <span style="font-size:13px;color:var(--text-secondary);" id="archivedCount"></span>
+        </div>
+      </div>
+      <div id="archivedCandidatesList"></div>
     </section>
 
     <!-- АНАЛИТИКА -->
@@ -198,7 +213,8 @@
       <form id="vacancyForm">
         <input type="hidden" id="vacancyId">
         <div class="field"><label>Название</label><input type="text" id="vTitle" required></div>
-        <div class="field"><label>Руководитель</label>
+        <div class="field">
+          <label>Руководитель</label>
           <select id="vManager" required></select>
         </div>
         <div class="field"><label>Телефон руководителя</label><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99"></div>
@@ -459,4 +475,3 @@
 
 <script type="module" src="app.js"></script>
 </body>
-</html>
