@@ -1,6 +1,8 @@
-// firebase.js — инициализация firebase и общие хелперы доступа к данным
+// ============================================================
+// firebase.js — подключение Firebase, авторизация, работа с RTDB
+// ============================================================
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
   getAuth,
   signInWithEmailAndPassword,
@@ -9,32 +11,22 @@ import {
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
+  createUserWithEmailAndPassword,
   updatePassword,
-  EmailAuthProvider,
-  reauthenticateWithCredential
+  updateProfile
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
   getDatabase,
   ref,
-  get,
   set,
   update,
   remove,
   push,
+  get,
   onValue,
   off,
-  query,
-  orderByChild,
-  equalTo,
-  serverTimestamp
+  child
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC_t_WKtpQBkvmcalMjD3KujYYCnjKHh9Y",
@@ -49,62 +41,92 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getDatabase(app);
-export const storage = getStorage(app);
 
-export {
-  ref, get, set, update, remove, push, onValue, off, query, orderByChild, equalTo, serverTimestamp,
-  storageRef, uploadBytes, getDownloadURL, deleteObject,
-  signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  setPersistence, browserLocalPersistence, browserSessionPersistence,
-  updatePassword, EmailAuthProvider, reauthenticateWithCredential
-};
+// ---------------------------------------------------------
+// AUTH
+// ---------------------------------------------------------
 
-// ---------- auth ----------
-
-export function loginUser(email, password, remember) {
-  const persistence = remember ? browserLocalPersistence : browserSessionPersistence;
-  return setPersistence(auth, persistence).then(() =>
-    signInWithEmailAndPassword(auth, email, password)
-  );
+export async function loginUser(email, password, remember) {
+  await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+  return signInWithEmailAndPassword(auth, email, password);
 }
 
 export function logoutUser() {
   return signOut(auth);
 }
 
-export function watchAuth(callback) {
+export function onAuthChange(callback) {
   return onAuthStateChanged(auth, callback);
 }
 
-// ---------- generic db helpers ----------
+export async function getUserProfile(uid) {
+  const snap = await get(ref(db, `users/${uid}`));
+  return snap.exists() ? snap.val() : null;
+}
 
-export async function dbGet(path) {
+export async function updateOwnPassword(newPassword) {
+  return updatePassword(auth.currentUser, newPassword);
+}
+
+export async function updateOwnProfile(name) {
+  await updateProfile(auth.currentUser, { displayName: name });
+  await update(ref(db, `users/${auth.currentUser.uid}`), { name });
+}
+
+// Секретный трюк: создаём пользователя через вторичный instance приложения,
+// чтобы не разлогинивать текущего администратора.
+export async function createUserSecondary(email, password, name, role) {
+  const secondaryApp = initializeApp(firebaseConfig, "Secondary_" + Date.now());
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    const uid = cred.user.uid;
+    await set(ref(db, `users/${uid}`), {
+      name, email, role, createdAt: Date.now()
+    });
+    await signOut(secondaryAuth);
+    await deleteApp(secondaryApp);
+    return uid;
+  } catch (e) {
+    await deleteApp(secondaryApp).catch(() => {});
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------
+// GENERIC DB HELPERS
+// ---------------------------------------------------------
+
+export function listenPath(path, callback) {
+  const r = ref(db, path);
+  onValue(r, (snap) => callback(snap.val() || {}));
+  return () => off(r);
+}
+
+export async function getPath(path) {
   const snap = await get(ref(db, path));
   return snap.exists() ? snap.val() : null;
 }
 
-export function dbSet(path, value) {
-  return set(ref(db, path), value);
+export function pushPath(path, data) {
+  const newRef = push(ref(db, path));
+  return set(newRef, data).then(() => newRef.key);
 }
 
-export function dbUpdate(path, value) {
-  return update(ref(db, path), value);
+export function setPath(path, data) {
+  return set(ref(db, path), data);
 }
 
-export function dbRemove(path) {
+export function updatePath(path, data) {
+  return update(ref(db, path), data);
+}
+
+export function removePath(path) {
   return remove(ref(db, path));
 }
 
-export function dbPushKey(path) {
+export function pushKey(path) {
   return push(ref(db, path)).key;
 }
 
-export function dbWatch(path, callback) {
-  const r = ref(db, path);
-  onValue(r, (snap) => callback(snap.exists() ? snap.val() : null));
-  return () => off(r);
-}
-
-export function nowStamp() {
-  return Date.now();
-}
+export { ref, child };
