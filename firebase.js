@@ -1,132 +1,137 @@
-// ============================================================
-// firebase.js — подключение Firebase, авторизация, работа с RTDB
-// ============================================================
+// firebase.js — инициализация firebase (modular sdk v9, через cdn, без npm/сборки)
 
-import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth,
+  onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
-  onAuthStateChanged,
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   createUserWithEmailAndPassword,
   updatePassword,
-  updateProfile
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+  updateProfile,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getDatabase,
   ref,
   set,
+  get,
   update,
   remove,
   push,
-  get,
   onValue,
   off,
-  child
-} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+  query,
+  orderByChild,
+  equalTo,
+  serverTimestamp,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC_t_WKtpQBkvmcalMjD3KujYYCnjKHh9Y",
-  authDomain: "demicrm1611.firebaseapp.com",
-  databaseURL: "https://demicrm1611-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "demicrm1611",
-  storageBucket: "demicrm1611.firebasestorage.app",
-  messagingSenderId: "294937123695",
-  appId: "1:294937123695:web:59c9415215e2f6fc7b669a"
+  apiKey: "AIzaSyAfqdcFJ8Mz2EzvqhqXKcyfBJLdl7-w3Xg",
+  authDomain: "demcrm1611.firebaseapp.com",
+  databaseURL: "https://demcrm1611-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "demcrm1611",
+  storageBucket: "demcrm1611.firebasestorage.app",
+  messagingSenderId: "1087839612882",
+  appId: "1:1087839612882:web:40212eba37bff3403b620b",
 };
 
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getDatabase(app);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
 
-// ---------------------------------------------------------
-// AUTH
-// ---------------------------------------------------------
+const MAIN_ADMIN = {
+  email: "genedemi@mail.ru",
+  password: "demicheva16",
+  name: "Главный администратор",
+  role: "admin",
+  phone: "",
+};
 
-export async function loginUser(email, password, remember) {
-  await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
-  return signInWithEmailAndPassword(auth, email, password);
-}
+async function ensureMainAdmin() {
+  const readyRef = ref(db, "meta/mainAdminReady");
 
-export function logoutUser() {
-  return signOut(auth);
-}
-
-export function onAuthChange(callback) {
-  return onAuthStateChanged(auth, callback);
-}
-
-export async function getUserProfile(uid) {
-  const snap = await get(ref(db, `users/${uid}`));
-  return snap.exists() ? snap.val() : null;
-}
-
-export async function updateOwnPassword(newPassword) {
-  return updatePassword(auth.currentUser, newPassword);
-}
-
-export async function updateOwnProfile(name) {
-  await updateProfile(auth.currentUser, { displayName: name });
-  await update(ref(db, `users/${auth.currentUser.uid}`), { name });
-}
-
-// Секретный трюк: создаём пользователя через вторичный instance приложения,
-// чтобы не разлогинивать текущего администратора.
-export async function createUserSecondary(email, password, name, role) {
-  const secondaryApp = initializeApp(firebaseConfig, "Secondary_" + Date.now());
-  const secondaryAuth = getAuth(secondaryApp);
+  let alreadyReady = false;
   try {
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    const uid = cred.user.uid;
-    await set(ref(db, `users/${uid}`), {
-      name, email, role, createdAt: Date.now()
+    const snap = await get(readyRef);
+    alreadyReady = snap.val() === true;
+  } catch (err) {
+    console.warn("ensureMainAdmin: не удалось проверить флаг", err.message);
+    return;
+  }
+  if (alreadyReady) return;
+
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, MAIN_ADMIN.email, MAIN_ADMIN.password);
+    await updateProfile(cred.user, { displayName: MAIN_ADMIN.name });
+    await set(ref(db, `users/${cred.user.uid}`), {
+      name: MAIN_ADMIN.name,
+      email: MAIN_ADMIN.email,
+      phone: MAIN_ADMIN.phone,
+      role: MAIN_ADMIN.role,
+      isMainAdmin: true,
+      createdAt: serverTimestamp(),
     });
-    await signOut(secondaryAuth);
-    await deleteApp(secondaryApp);
-    return uid;
-  } catch (e) {
-    await deleteApp(secondaryApp).catch(() => {});
-    throw e;
+    await set(readyRef, true);
+  } catch (err) {
+    if (err.code === "auth/email-already-in-use") {
+      try { await set(readyRef, true); } catch (_) {}
+    } else {
+      console.warn("ensureMainAdmin:", err.message);
+    }
   }
 }
 
-// ---------------------------------------------------------
-// GENERIC DB HELPERS
-// ---------------------------------------------------------
-
-export function listenPath(path, callback) {
-  const r = ref(db, path);
-  onValue(r, (snap) => callback(snap.val() || {}));
-  return () => off(r);
+async function createUserAsAdmin({ email, password, name, role, phone = "" }) {
+  const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    await updateProfile(cred.user, { displayName: name });
+    await set(ref(db, `users/${cred.user.uid}`), {
+      name,
+      email,
+      phone,
+      role,
+      isMainAdmin: false,
+      createdAt: serverTimestamp(),
+    });
+    await signOut(secondaryAuth);
+    return cred.user.uid;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
 }
 
-export async function getPath(path) {
-  const snap = await get(ref(db, path));
-  return snap.exists() ? snap.val() : null;
-}
-
-export function pushPath(path, data) {
-  const newRef = push(ref(db, path));
-  return set(newRef, data).then(() => newRef.key);
-}
-
-export function setPath(path, data) {
-  return set(ref(db, path), data);
-}
-
-export function updatePath(path, data) {
-  return update(ref(db, path), data);
-}
-
-export function removePath(path) {
-  return remove(ref(db, path));
-}
-
-export function pushKey(path) {
-  return push(ref(db, path)).key;
-}
-
-export { ref, child };
+export {
+  app,
+  auth,
+  db,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  updateProfile,
+  ref,
+  set,
+  get,
+  update,
+  remove,
+  push,
+  onValue,
+  off,
+  query,
+  orderByChild,
+  equalTo,
+  serverTimestamp,
+  ensureMainAdmin,
+  createUserAsAdmin,
+  MAIN_ADMIN,
+};
