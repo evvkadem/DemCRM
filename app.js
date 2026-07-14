@@ -9,7 +9,7 @@ import {
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import { getAuth as getAuthSecondary, createUserWithEmailAndPassword, signOut as signOutSecondary } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 
-/* ===================== константы ===================== */
+/* ===================== КОНСТАНТЫ ===================== */
 
 const STAGES = [
   { key: "response", label: "Отклик" },
@@ -22,17 +22,7 @@ const STAGES = [
   { key: "hired", label: "Трудоустройство" }
 ];
 
-const STAGES_FOR_AUTO_ARCHIVE = ["response", "selected1", "invited"]; // этапы для автоархивации
-
-// правила проверки перехода между этапами — легко расширяется новыми объектами
-const STAGE_TRANSITION_RULES = [
-  {
-    from: "interview",
-    to: "selected2",
-    check: (candidate) => !!(candidate.documents && candidate.documents.anketa),
-    message: "Анкета кандидата не загружена.\nВы действительно хотите перевести кандидата на следующий этап без анкеты?"
-  }
-];
+const STAGES_FOR_AUTO_ARCHIVE = ["response", "selected1", "invited"];
 
 const SOURCES = [
   { key: "hh", label: "hh" },
@@ -40,10 +30,10 @@ const SOURCES = [
   { key: "прочее", label: "Прочее" }
 ];
 
-/* ===================== состояние ===================== */
+/* ===================== СОСТОЯНИЕ ===================== */
 
 const state = {
-  currentUser: null, // { uid, name, email, role, phone }
+  currentUser: null,
   users: {},
   vacancies: {},
   candidates: {},
@@ -55,10 +45,10 @@ const state = {
   theme: localStorage.getItem("demcrm_theme") || "light",
   analyticsDate: new Date(),
   analyticsPeriod: "day",
-  missedInterviewCount: {} // для отслеживания пропусков собеседований
+  currentView: "vacancies"
 };
 
-/* ===================== утилиты ===================== */
+/* ===================== УТИЛИТЫ ===================== */
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
@@ -119,7 +109,6 @@ function debounce(fn, delay) {
 
 function formatPhone(phone) {
   if (!phone) return "";
-  // Убираем все кроме цифр
   let cleaned = String(phone).replace(/\D/g, "");
   if (cleaned.length === 11 && cleaned.startsWith("7")) {
     return `7 ${cleaned.slice(1, 4)} ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
@@ -137,10 +126,12 @@ function parsePhone(phone) {
 
 function getTagsArray(tagsStr) {
   if (!tagsStr) return [];
+  if (Array.isArray(tagsStr)) return tagsStr;
   return tagsStr.split(",").map(t => t.trim()).filter(t => t);
 }
 
 function tagsToString(tagsArray) {
+  if (!tagsArray || !Array.isArray(tagsArray)) return "";
   return tagsArray.join(", ");
 }
 
@@ -148,7 +139,7 @@ function getStageIndex(key) {
   return STAGES.findIndex(s => s.key === key);
 }
 
-/* ===================== тема ===================== */
+/* ===================== ТЕМА ===================== */
 
 function applyTheme(theme) {
   state.theme = theme;
@@ -157,7 +148,7 @@ function applyTheme(theme) {
   $all(".theme-option").forEach((b) => b.classList.toggle("active", b.dataset.theme === theme));
 }
 
-/* ===================== история действий кандидата ===================== */
+/* ===================== ИСТОРИЯ ===================== */
 
 async function pushHistory(candidateId, actionText) {
   const key = dbPushKey(`candidates/${candidateId}/history`);
@@ -168,7 +159,7 @@ async function pushHistory(candidateId, actionText) {
   });
 }
 
-/* ===================== авторизация ===================== */
+/* ===================== АВТОРИЗАЦИЯ ===================== */
 
 function initAuth() {
   $("#loginForm").addEventListener("submit", async (e) => {
@@ -181,7 +172,7 @@ function initAuth() {
     try {
       await loginUser(email, password, remember);
     } catch (err) {
-      $("#loginError").textContent = "неверный email или пароль";
+      $("#loginError").textContent = "Неверный email или пароль";
       $("#loginError").classList.remove("hidden");
     }
     $("#loginSubmit").textContent = "Войти";
@@ -196,7 +187,7 @@ function initAuth() {
     }
     const profile = await dbGet(`users/${fbUser.uid}`);
     if (!profile) {
-      $("#loginError").textContent = "у вашего аккаунта нет профиля в базе — обратитесь к администратору";
+      $("#loginError").textContent = "У вашего аккаунта нет профиля в базе — обратитесь к администратору";
       $("#loginError").classList.remove("hidden");
       await logoutUser();
       return;
@@ -207,7 +198,6 @@ function initAuth() {
     applyRoleUI();
     startDataWatchers();
     switchView("vacancies");
-    // Запускаем проверку автоархивации
     checkAutoArchive();
   });
 }
@@ -227,24 +217,32 @@ document.body.addEventListener("click", (e) => {
   if (e.target.id === "logoutBtn") logoutUser();
 });
 
-/* ===================== вотчеры данных ===================== */
+/* ===================== ВОТЧЕРЫ ДАННЫХ ===================== */
 
 function startDataWatchers() {
-  dbWatch("users", (data) => { state.users = data || {}; renderUsersTable(); populateGlobalCaches(); populateManagerSelects(); });
-  dbWatch("vacancies", (data) => { state.vacancies = data || {}; renderVacancies(); populateFilterOptions(); renderKanbanIfOpen(); });
+  dbWatch("users", (data) => { 
+    state.users = data || {}; 
+    renderUsersTable(); 
+    populateManagerSelects();
+    populateFilterOptions();
+  });
+  dbWatch("vacancies", (data) => { 
+    state.vacancies = data || {}; 
+    renderVacancies(); 
+    renderKanbanIfOpen(); 
+  });
   dbWatch("candidates", (data) => {
     state.candidates = data || {};
     renderVacancies();
     renderKanbanIfOpen();
     renderCandidatesTable();
+    renderArchivedCandidates();
     renderAnalytics();
     renderTodayInterviews();
     if (state.currentCandidateId) refreshOpenCandidateModal();
     checkAutoArchive();
   });
 }
-
-function populateGlobalCaches() {}
 
 function populateManagerSelects() {
   const select = $("#vManager");
@@ -257,28 +255,60 @@ function populateManagerSelects() {
   select.value = current;
 }
 
-/* ===================== навигация ===================== */
+function populateFilterOptions() {
+  const vacSelect = $("#filterVacancy");
+  if (!vacSelect) return;
+  const current = vacSelect.value;
+  vacSelect.innerHTML = '<option value="">Все вакансии</option>' + 
+    Object.entries(state.vacancies || {}).map(([id, v]) => 
+      `<option value="${id}">${escapeHtml(v.title)}</option>`
+    ).join("");
+  vacSelect.value = current;
+
+  const stageSelect = $("#filterStage");
+  if (stageSelect && !stageSelect.dataset.filled) {
+    stageSelect.innerHTML = '<option value="">Все этапы</option>' + 
+      STAGES.map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join("");
+    stageSelect.dataset.filled = "1";
+  }
+  
+  const sourceSelect = $("#filterSource");
+  if (sourceSelect && !sourceSelect.dataset.filled) {
+    sourceSelect.innerHTML = '<option value="">Все источники</option>' + 
+      SOURCES.map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join("");
+    sourceSelect.dataset.filled = "1";
+  }
+}
+
+/* ===================== НАВИГАЦИЯ ===================== */
 
 function switchView(name) {
+  state.currentView = name;
   $all(".view").forEach((v) => v.classList.remove("active"));
-  $(`#view-${name}`).classList.add("active");
+  const target = $(`#view-${name}`);
+  if (target) target.classList.add("active");
   $all(".nav-item[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  
   if (name === "candidates") renderCandidatesTable();
   if (name === "analytics") renderAnalytics();
+  if (name === "archived") renderArchivedCandidates();
 }
 
 $all(".nav-item[data-view]").forEach((btn) => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 
-$("#kanbanBack").addEventListener("click", () => { state.activeVacancyId = null; switchView("vacancies"); });
+$("#kanbanBack").addEventListener("click", () => { 
+  state.activeVacancyId = null; 
+  switchView("vacancies"); 
+});
 
 /* ===================== ВАКАНСИИ ===================== */
 
 let vacancyStatusFilter = "all";
 let vacancySearchTerm = "";
 
-$("#vacancyStatusFilter").addEventListener("click", (e) => {
+$("#vacancyStatusFilter")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".pill");
   if (!btn) return;
   vacancyStatusFilter = btn.dataset.status;
@@ -286,7 +316,7 @@ $("#vacancyStatusFilter").addEventListener("click", (e) => {
   renderVacancies();
 });
 
-$("#vacancySearch").addEventListener("input", (e) => {
+$("#vacancySearch")?.addEventListener("input", (e) => {
   vacancySearchTerm = e.target.value.trim().toLowerCase();
   renderVacancies();
 });
@@ -300,12 +330,16 @@ function vacancyStats(vacancyId) {
 
 function renderVacancies() {
   const grid = $("#vacancyGrid");
+  if (!grid) return;
+  
   let entries = Object.entries(state.vacancies || {});
   if (vacancyStatusFilter !== "all") entries = entries.filter(([, v]) => v.status === vacancyStatusFilter);
   if (vacancySearchTerm) entries = entries.filter(([, v]) => (v.title || "").toLowerCase().includes(vacancySearchTerm));
   entries.sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
 
-  $("#vacancyEmpty").classList.toggle("hidden", entries.length > 0);
+  const empty = $("#vacancyEmpty");
+  if (empty) empty.classList.toggle("hidden", entries.length > 0);
+  
   grid.innerHTML = entries.map(([id, v]) => {
     const stats = vacancyStats(id);
     const positions = Number(v.positions) || 0;
@@ -336,7 +370,7 @@ function renderVacancies() {
   });
 }
 
-$("#addVacancyBtn").addEventListener("click", () => openVacancyModal(null));
+$("#addVacancyBtn")?.addEventListener("click", () => openVacancyModal(null));
 
 function openVacancyModal(id) {
   const isEdit = !!id;
@@ -363,7 +397,7 @@ function openVacancyModal(id) {
   openModal("#modalVacancy");
 }
 
-$("#saveVacancyBtn").addEventListener("click", async () => {
+$("#saveVacancyBtn")?.addEventListener("click", async () => {
   if (!$("#vacancyForm").reportValidity()) return;
   const id = $("#vacancyId").value || dbPushKey("vacancies");
   const managerId = $("#vManager").value;
@@ -386,7 +420,7 @@ $("#saveVacancyBtn").addEventListener("click", async () => {
   toast("Вакансия сохранена");
 });
 
-$("#deleteVacancyBtn").addEventListener("click", async () => {
+$("#deleteVacancyBtn")?.addEventListener("click", async () => {
   const id = $("#vacancyId").value;
   if (!id) return;
   if (!confirm("Удалить вакансию? Кандидаты останутся в базе, но потеряют привязку.")) return;
@@ -411,6 +445,8 @@ function renderKanbanIfOpen() {
 
 function renderKanban() {
   const board = $("#kanbanBoard");
+  if (!board) return;
+  
   const vacancyId = state.activeVacancyId;
   const candidates = Object.entries(state.candidates || {}).filter(([, c]) => c.vacancyId === vacancyId && !c.archived);
 
@@ -442,8 +478,12 @@ function renderKcard(id, c) {
   if (!c.documents || !c.documents.anketa) tags.push('<span class="tag tag-no-anketa">нет анкеты</span>');
   if (c.interview && c.interview.date && isToday(new Date(c.interview.date).getTime())) tags.push('<span class="tag tag-today">собеседование сегодня</span>');
   if (c.stage === "hired") tags.push('<span class="tag tag-hired">трудоустроен</span>');
-  if (c.archived) tags.push('<span class="tag tag-archived">архивный</span>');
-  if (c.tags && c.tags.includes("черный список")) tags.push('<span class="tag tag-blacklist">черный список</span>');
+  if (c.tags && Array.isArray(c.tags)) {
+    if (c.tags.includes("черный список")) tags.push('<span class="tag tag-blacklist">черный список</span>');
+    c.tags.forEach(t => {
+      if (t && t !== "черный список") tags.push(`<span class="tag" style="background:var(--border);color:var(--text);">${escapeHtml(t)}</span>`);
+    });
+  }
   if (c.missedCount && c.missedCount >= 3) tags.push('<span class="tag tag-blacklist">черный список</span>');
   
   const recruiter = state.users[c.recruiterId];
@@ -485,7 +525,7 @@ function bindKanbanDnD() {
 function attemptStageMove(candidateId, newStage) {
   const c = state.candidates[candidateId];
   if (!c || c.stage === newStage) return;
-  const rule = STAGE_TRANSITION_RULES.find((r) => r.from === c.stage && r.to === newStage);
+  const rule = STAGE_TRANSITION_RULES?.find((r) => r.from === c.stage && r.to === newStage);
   if (rule && !rule.check(c)) {
     state.pendingStageMove = { candidateId, newStage };
     openModal("#modalConfirmStage");
@@ -502,16 +542,16 @@ async function commitStageMove(candidateId, newStage) {
   await pushHistory(candidateId, `перевёл(а) кандидата на этап «${stageLabel(newStage)}»`);
 }
 
-$("#cancelStageBtn").addEventListener("click", () => { state.pendingStageMove = null; closeModal("#modalConfirmStage"); renderKanban(); });
-$("#continueStageBtn").addEventListener("click", async () => {
+$("#cancelStageBtn")?.addEventListener("click", () => { state.pendingStageMove = null; closeModal("#modalConfirmStage"); renderKanban(); });
+$("#continueStageBtn")?.addEventListener("click", async () => {
   if (state.pendingStageMove) await commitStageMove(state.pendingStageMove.candidateId, state.pendingStageMove.newStage);
   state.pendingStageMove = null;
   closeModal("#modalConfirmStage");
 });
 
-/* ===================== добавление кандидата ===================== */
+/* ===================== ДОБАВЛЕНИЕ КАНДИДАТА ===================== */
 
-$("#addCandidateBtn").addEventListener("click", () => {
+$("#addCandidateBtn")?.addEventListener("click", () => {
   $("#addCandidateForm").reset();
   $("#candidateExistsWarning").classList.add("hidden");
   $("#cAddSource").value = "прочее";
@@ -519,7 +559,7 @@ $("#addCandidateBtn").addEventListener("click", () => {
   openModal("#modalAddCandidate");
 });
 
-// Кастомные селекты
+// КАСТОМНЫЕ СЕЛЕКТЫ
 function initCustomSelects() {
   document.addEventListener("click", (e) => {
     const trigger = e.target.closest(".custom-select-trigger");
@@ -528,7 +568,6 @@ function initCustomSelects() {
       const options = document.getElementById(targetId);
       if (options) {
         const isOpen = !options.classList.contains("hidden");
-        // Закрываем все открытые
         $all(".custom-select-options").forEach(o => o.classList.add("hidden"));
         $all(".custom-select-trigger").forEach(t => t.classList.remove("active"));
         if (!isOpen) {
@@ -543,24 +582,21 @@ function initCustomSelects() {
     if (option) {
       const value = option.dataset.value;
       const container = option.closest(".custom-select-options");
-      const trigger = container.parentElement.querySelector(".custom-select-trigger");
-      const hiddenInput = container.parentElement.parentElement.querySelector('input[type="hidden"]');
+      const parent = container?.parentElement;
+      const trigger = parent?.querySelector(".custom-select-trigger");
+      const hiddenInput = parent?.parentElement?.querySelector('input[type="hidden"]');
       if (trigger) {
         trigger.textContent = option.textContent;
         trigger.classList.remove("active");
       }
       if (hiddenInput) {
         hiddenInput.value = value;
-      }
-      container.classList.add("hidden");
-      // trigger change event
-      if (hiddenInput) {
         hiddenInput.dispatchEvent(new Event('change'));
       }
+      if (container) container.classList.add("hidden");
       return;
     }
     
-    // Закрываем все при клике вне
     if (!e.target.closest(".custom-select")) {
       $all(".custom-select-options").forEach(o => o.classList.add("hidden"));
       $all(".custom-select-trigger").forEach(t => t.classList.remove("active"));
@@ -571,26 +607,21 @@ function initCustomSelects() {
 function updateCustomSelect(triggerId, optionsId, value) {
   const trigger = document.getElementById(triggerId);
   const options = document.getElementById(optionsId);
-  const hiddenInput = options ? options.parentElement.parentElement.querySelector('input[type="hidden"]') : null;
+  if (!trigger || !options) return;
   
-  if (trigger) {
-    const selectedOption = options ? options.querySelector(`.custom-select-option[data-value="${value}"]`) : null;
-    if (selectedOption) {
-      trigger.textContent = selectedOption.textContent;
-    }
-    // Убираем выделение со всех опций
-    if (options) {
-      options.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
-      const opt = options.querySelector(`.custom-select-option[data-value="${value}"]`);
-      if (opt) opt.classList.add('selected');
-    }
+  const hiddenInput = options.closest('.field')?.querySelector('input[type="hidden"]') || 
+                      options.parentElement?.parentElement?.querySelector('input[type="hidden"]');
+  
+  const selectedOption = options.querySelector(`.custom-select-option[data-value="${value}"]`);
+  if (selectedOption) {
+    trigger.textContent = selectedOption.textContent;
   }
-  if (hiddenInput) {
-    hiddenInput.value = value;
-  }
+  options.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+  const opt = options.querySelector(`.custom-select-option[data-value="${value}"]`);
+  if (opt) opt.classList.add('selected');
+  if (hiddenInput) hiddenInput.value = value;
 }
 
-// Инициализация кастомных селектов
 initCustomSelects();
 
 // Проверка существования кандидата
@@ -610,34 +641,43 @@ function findExistingCandidate(name, phone) {
   return null;
 }
 
-$("#cAddName, #cAddPhone").oninput = function() {
+$("#cAddName")?.addEventListener("input", checkExistingCandidate);
+$("#cAddPhone")?.addEventListener("input", checkExistingCandidate);
+
+function checkExistingCandidate() {
   const name = $("#cAddName").value.trim();
   const phone = $("#cAddPhone").value.trim();
+  const warning = $("#candidateExistsWarning");
+  if (!warning) return;
+  
   if (name || phone) {
     const existing = findExistingCandidate(name, phone);
-    const warning = $("#candidateExistsWarning");
     if (existing) {
       warning.classList.remove("hidden");
-      $("#gotoExistingCandidate").onclick = (e) => {
-        e.preventDefault();
-        closeModal("#modalAddCandidate");
-        const c = existing.candidate;
-        if (c.vacancyId) openKanban(c.vacancyId);
-        openCandidateModal(existing.id);
-      };
+      const link = $("#gotoExistingCandidate");
+      if (link) {
+        link.onclick = (e) => {
+          e.preventDefault();
+          closeModal("#modalAddCandidate");
+          const c = existing.candidate;
+          if (c.vacancyId) openKanban(c.vacancyId);
+          openCandidateModal(existing.id);
+        };
+      }
     } else {
       warning.classList.add("hidden");
     }
+  } else {
+    warning.classList.add("hidden");
   }
-};
+}
 
-$("#saveAddCandidateBtn").addEventListener("click", async () => {
+$("#saveAddCandidateBtn")?.addEventListener("click", async () => {
   if (!$("#addCandidateForm").reportValidity()) return;
   
   const name = $("#cAddName").value.trim();
   const phone = $("#cAddPhone").value.trim();
   
-  // Проверяем существует ли кандидат
   const existing = findExistingCandidate(name, phone);
   if (existing) {
     toast("Кандидат уже существует в базе", "error");
@@ -667,7 +707,7 @@ $("#saveAddCandidateBtn").addEventListener("click", async () => {
   toast("Кандидат добавлен");
 });
 
-/* ===================== карточка кандидата ===================== */
+/* ===================== КАРТОЧКА КАНДИДАТА ===================== */
 
 function canEditCandidate(c) {
   return state.currentUser.role === "администратор" || c.recruiterId === state.currentUser.uid;
@@ -692,15 +732,15 @@ function renderCandidateModal(id) {
   $("#candName").value = c.name || "";
   $("#candPhone").value = c.phone || "";
   
-  // Обновляем кастомный селект для источника
   updateCustomSelect("candSourceSelect", "candSourceOptions", c.source || "прочее");
   $("#candSource").value = c.source || "прочее";
 
   const vacSelect = $("#candVacancy");
-  vacSelect.innerHTML = Object.entries(state.vacancies).map(([vid, v]) => `<option value="${vid}">${escapeHtml(v.title)}</option>`).join("");
-  vacSelect.value = c.vacancyId || "";
+  if (vacSelect) {
+    vacSelect.innerHTML = Object.entries(state.vacancies).map(([vid, v]) => `<option value="${vid}">${escapeHtml(v.title)}</option>`).join("");
+    vacSelect.value = c.vacancyId || "";
+  }
 
-  // Теги
   $("#candTagsInput").value = (c.tags && Array.isArray(c.tags)) ? c.tags.join(", ") : "";
 
   $("#candStageValue").textContent = stageLabel(c.stage);
@@ -711,6 +751,7 @@ function renderCandidateModal(id) {
   $("#candInterviewDate").value = (c.interview && c.interview.date) || "";
   $("#candInterviewTime").value = (c.interview && c.interview.time) || "";
   $("#candInterviewComment").value = (c.interview && c.interview.comment) || "";
+  $("#candNotes").value = c.notes || "";
 
   const anketa = c.documents && c.documents.anketa;
   const resume = c.documents && c.documents.resume;
@@ -732,8 +773,7 @@ function renderCandidateModal(id) {
   }
   if (c.missedCount && c.missedCount >= 3) {
     tags.push('<span class="tag tag-blacklist">черный список (3+ пропусков)</span>');
-  }
-  if (c.missedCount && c.missedCount > 0 && c.missedCount < 3) {
+  } else if (c.missedCount && c.missedCount > 0) {
     tags.push(`<span class="tag tag-missed">пропусков: ${c.missedCount}</span>`);
   }
   $("#candTags").innerHTML = tags.join("");
@@ -754,7 +794,7 @@ function renderCandidateModal(id) {
   $("#candMissInterviewBtn").classList.toggle("hidden", !editable);
 }
 
-$("#saveCandidateBtn").addEventListener("click", async () => {
+$("#saveCandidateBtn")?.addEventListener("click", async () => {
   const id = state.currentCandidateId;
   const c = state.candidates[id];
   if (!c || !canEditCandidate(c)) return;
@@ -778,8 +818,7 @@ $("#saveCandidateBtn").addEventListener("click", async () => {
   toast("Сохранено");
 });
 
-// Пометка "не пришёл на собеседование"
-$("#candMissInterviewBtn").addEventListener("click", async () => {
+$("#candMissInterviewBtn")?.addEventListener("click", async () => {
   const id = state.currentCandidateId;
   const c = state.candidates[id];
   if (!c) return;
@@ -787,7 +826,6 @@ $("#candMissInterviewBtn").addEventListener("click", async () => {
   const missedCount = (c.missedCount || 0) + 1;
   const updates = { missedCount: missedCount };
   
-  // Если 3 пропуска - добавляем тег "черный список"
   if (missedCount >= 3) {
     const tags = c.tags || [];
     if (!tags.includes("черный список")) {
@@ -804,7 +842,7 @@ $("#candMissInterviewBtn").addEventListener("click", async () => {
   renderCandidateModal(id);
 });
 
-$("#archiveCandidateBtn").addEventListener("click", async () => {
+$("#archiveCandidateBtn")?.addEventListener("click", async () => {
   const id = state.currentCandidateId;
   if (!id) return;
   if (!confirm("Архивировать кандидата?")) return;
@@ -814,7 +852,7 @@ $("#archiveCandidateBtn").addEventListener("click", async () => {
   toast("Кандидат архивирован");
 });
 
-$("#deleteCandidateBtn").addEventListener("click", async () => {
+$("#deleteCandidateBtn")?.addEventListener("click", async () => {
   const id = state.currentCandidateId;
   if (!id) return;
   if (!confirm("Удалить кандидата безвозвратно?")) return;
@@ -824,7 +862,7 @@ $("#deleteCandidateBtn").addEventListener("click", async () => {
 });
 
 // Автосохранение заметок
-$("#candNotes").addEventListener("input", () => {
+$("#candNotes")?.addEventListener("input", () => {
   const id = state.currentCandidateId;
   clearTimeout(state.notesTimer);
   $("#notesAutosaveHint").textContent = "сохраняем...";
@@ -838,11 +876,13 @@ $("#candNotes").addEventListener("input", () => {
   }, 900);
 });
 
-/* ---- документы ---- */
+/* ---- ДОКУМЕНТЫ ---- */
 
 function bindDocDrop(dropId, inputId, docType) {
   const drop = $(dropId);
   const input = $(inputId);
+  if (!drop || !input) return;
+  
   drop.addEventListener("click", () => input.click());
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag-over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("drag-over"));
@@ -879,38 +919,26 @@ async function uploadCandidateDoc(docType, file) {
   }
 }
 
-/* ===================== база кандидатов (таблица) ===================== */
-
-function populateFilterOptions() {
-  const vacSelect = $("#filterVacancy");
-  const current = vacSelect.value;
-  vacSelect.innerHTML = '<option value="">Все вакансии</option>' + Object.entries(state.vacancies).map(([id, v]) => `<option value="${id}">${escapeHtml(v.title)}</option>`).join("");
-  vacSelect.value = current;
-
-  const stageSelect = $("#filterStage");
-  if (!stageSelect.dataset.filled) {
-    stageSelect.innerHTML = '<option value="">Все этапы</option>' + STAGES.map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join("");
-    stageSelect.dataset.filled = "1";
-  }
-  const sourceSelect = $("#filterSource");
-  if (!sourceSelect.dataset.filled) {
-    sourceSelect.innerHTML = '<option value="">Все источники</option>' + SOURCES.map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join("");
-    sourceSelect.dataset.filled = "1";
-  }
-}
+/* ===================== БАЗА КАНДИДАТОВ ===================== */
 
 ["candidatesSearch", "filterVacancy", "filterStage", "filterSource"].forEach((id) => {
-  $(`#${id}`).addEventListener("input", renderCandidatesTable);
-  $(`#${id}`).addEventListener("change", renderCandidatesTable);
+  const el = $(`#${id}`);
+  if (el) {
+    el.addEventListener("input", renderCandidatesTable);
+    el.addEventListener("change", renderCandidatesTable);
+  }
 });
 
 function renderCandidatesTable() {
-  const term = $("#candidatesSearch").value.trim().toLowerCase();
-  const fVacancy = $("#filterVacancy").value;
-  const fStage = $("#filterStage").value;
-  const fSource = $("#filterSource").value;
+  const tbody = $("#candidatesTableBody");
+  if (!tbody) return;
+  
+  const term = $("#candidatesSearch")?.value?.trim().toLowerCase() || "";
+  const fVacancy = $("#filterVacancy")?.value || "";
+  const fStage = $("#filterStage")?.value || "";
+  const fSource = $("#filterSource")?.value || "";
 
-  let entries = Object.entries(state.candidates || {});
+  let entries = Object.entries(state.candidates || {}).filter(([, c]) => !c.archived);
   if (fVacancy) entries = entries.filter(([, c]) => c.vacancyId === fVacancy);
   if (fStage) entries = entries.filter(([, c]) => c.stage === fStage);
   if (fSource) entries = entries.filter(([, c]) => c.source === fSource);
@@ -924,11 +952,13 @@ function renderCandidatesTable() {
   }
   entries.sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
 
-  $("#candidatesEmpty").classList.toggle("hidden", entries.length > 0);
-  $("#candidatesTableBody").innerHTML = entries.map(([id, c]) => {
+  const empty = $("#candidatesEmpty");
+  if (empty) empty.classList.toggle("hidden", entries.length > 0);
+  
+  tbody.innerHTML = entries.map(([id, c]) => {
     const vac = state.vacancies[c.vacancyId];
     const rec = state.users[c.recruiterId];
-    const tagsDisplay = (c.tags && Array.isArray(c.tags)) ? c.tags.slice(0, 2).join(", ") + (c.tags.length > 2 ? "..." : "") : "";
+    const tagsDisplay = (c.tags && Array.isArray(c.tags)) ? c.tags.slice(0, 2).join(", ") + (c.tags.length > 2 ? "…" : "") : "";
     return `
       <tr data-id="${id}">
         <td>${escapeHtml(c.name)}</td>
@@ -947,9 +977,51 @@ function renderCandidatesTable() {
   });
 }
 
-/* ===================== импорт/экспорт кандидатов ===================== */
+/* ===================== АРХИВ КАНДИДАТОВ ===================== */
 
-$("#exportCandidatesBtn").addEventListener("click", () => {
+function renderArchivedCandidates() {
+  const container = $("#archivedCandidatesList");
+  if (!container) return;
+  
+  const entries = Object.entries(state.candidates || {}).filter(([, c]) => c.archived);
+  entries.sort((a, b) => (b[1].archivedAt || 0) - (a[1].archivedAt || 0));
+  
+  container.innerHTML = entries.length === 0 
+    ? '<div class="empty-state">Нет архивированных кандидатов</div>'
+    : entries.map(([id, c]) => {
+        const vac = state.vacancies[c.vacancyId];
+        const reason = c.archivedReason || "архивирован";
+        return `
+          <div class="archived-item" data-id="${id}" style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:8px;cursor:pointer;transition:background var(--dur);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <strong>${escapeHtml(c.name)}</strong>
+                <span style="color:var(--text-secondary);font-size:13px;margin-left:12px;">${escapeHtml(formatPhone(c.phone || ""))}</span>
+                <span style="color:var(--text-muted);font-size:12px;margin-left:12px;">${escapeHtml(vac ? vac.title : "—")}</span>
+              </div>
+              <div style="font-size:12px;color:var(--text-muted);">
+                ${reason} · ${formatDate(c.archivedAt)}
+              </div>
+            </div>
+            ${c.tags && Array.isArray(c.tags) && c.tags.length > 0 ? 
+              `<div style="margin-top:6px;font-size:11px;color:var(--text-secondary);">${c.tags.map(t => `#${escapeHtml(t)}`).join(' ')}</div>` : ''}
+          </div>
+        `;
+      }).join("");
+  
+  $all(".archived-item", container).forEach((item) => {
+    item.addEventListener("click", () => {
+      const id = item.dataset.id;
+      const c = state.candidates[id];
+      if (c && c.vacancyId) openKanban(c.vacancyId);
+      openCandidateModal(id);
+    });
+  });
+}
+
+/* ===================== ИМПОРТ/ЭКСПОРТ КАНДИДАТОВ ===================== */
+
+$("#exportCandidatesBtn")?.addEventListener("click", () => {
   const candidates = Object.entries(state.candidates || {}).map(([id, c]) => ({
     id,
     name: c.name || "",
@@ -960,7 +1032,8 @@ $("#exportCandidatesBtn").addEventListener("click", () => {
     createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : "",
     notes: c.notes || "",
     tags: (c.tags && Array.isArray(c.tags)) ? c.tags.join(", ") : "",
-    archived: c.archived || false
+    archived: c.archived || false,
+    archivedReason: c.archivedReason || ""
   }));
   
   const blob = new Blob([JSON.stringify(candidates, null, 2)], { type: "application/json" });
@@ -968,11 +1041,15 @@ $("#exportCandidatesBtn").addEventListener("click", () => {
   a.href = URL.createObjectURL(blob);
   a.download = `candidates-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
-  toast("Кандидаты экспортированы");
+  toast(`Экспортировано ${candidates.length} кандидатов`);
 });
 
-$("#importCandidatesBtn").addEventListener("click", () => $("#importCandidatesFile").click());
-$("#importCandidatesFile").addEventListener("change", async () => {
+$("#importCandidatesBtn")?.addEventListener("click", () => {
+  const input = $("#importCandidatesFile");
+  if (input) input.click();
+});
+
+$("#importCandidatesFile")?.addEventListener("change", async () => {
   const file = $("#importCandidatesFile").files[0];
   if (!file) return;
   try {
@@ -994,10 +1071,10 @@ $("#importCandidatesFile").addEventListener("change", async () => {
         documents: {},
         tags: item.tags ? item.tags.split(",").map(t => t.trim()).filter(t => t) : [],
         archived: item.archived || false,
+        archivedReason: item.archivedReason || "",
         missedCount: 0
       };
       
-      // Находим вакансию по названию
       if (item.vacancyTitle) {
         const vac = Object.entries(state.vacancies).find(([, v]) => v.title === item.vacancyTitle);
         if (vac) payload.vacancyId = vac[0];
@@ -1015,8 +1092,7 @@ $("#importCandidatesFile").addEventListener("change", async () => {
 
 /* ===================== АНАЛИТИКА ===================== */
 
-// Период для аналитики
-$("#analyticsPeriodFilter").addEventListener("click", (e) => {
+$("#analyticsPeriodFilter")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".pill");
   if (!btn) return;
   state.analyticsPeriod = btn.dataset.period;
@@ -1024,7 +1100,7 @@ $("#analyticsPeriodFilter").addEventListener("click", (e) => {
   renderAnalytics();
 });
 
-$("#analyticsDate").addEventListener("change", () => {
+$("#analyticsDate")?.addEventListener("change", () => {
   const val = $("#analyticsDate").value;
   if (val) {
     state.analyticsDate = new Date(val);
@@ -1067,17 +1143,6 @@ function getPeriodRange(date, period) {
   return { start, end };
 }
 
-function getPrevPeriodRange(date, period) {
-  const prev = new Date(date);
-  switch(period) {
-    case "day": prev.setDate(prev.getDate() - 1); break;
-    case "week": prev.setDate(prev.getDate() - 7); break;
-    case "month": prev.setMonth(prev.getMonth() - 1); break;
-    case "year": prev.setFullYear(prev.getFullYear() - 1); break;
-  }
-  return getPeriodRange(prev, period);
-}
-
 function renderAnalytics() {
   const candidates = Object.values(state.candidates || {});
   const vacancies = Object.values(state.vacancies || {});
@@ -1085,98 +1150,94 @@ function renderAnalytics() {
   const date = state.analyticsDate || new Date();
   const period = state.analyticsPeriod || "month";
   const range = getPeriodRange(date, period);
-  const prevRange = getPrevPeriodRange(date, period);
   
-  // Фильтруем по дате создания
   const filtered = candidates.filter(c => {
     if (c.archived) return false;
     return c.createdAt >= range.start.getTime() && c.createdAt <= range.end.getTime();
   });
   
-  const prevFiltered = candidates.filter(c => {
-    if (c.archived) return false;
-    return c.createdAt >= prevRange.start.getTime() && c.createdAt <= prevRange.end.getTime();
-  });
-  
-  // Статистика
   const total = filtered.length;
-  const prevTotal = prevFiltered.length;
-  const totalChange = prevTotal > 0 ? ((total - prevTotal) / prevTotal * 100) : 0;
-  
   const hired = filtered.filter(c => c.stage === "hired").length;
-  const prevHired = prevFiltered.filter(c => c.stage === "hired").length;
-  const hiredChange = prevHired > 0 ? ((hired - prevHired) / prevHired * 100) : 0;
-  
   const activeVacancies = vacancies.filter(v => v.status === "активна").length;
-  
   const interviews = filtered.filter(c => c.interview && c.interview.date && 
     new Date(c.interview.date).getTime() >= range.start.getTime() && 
     new Date(c.interview.date).getTime() <= range.end.getTime()
   ).length;
   
+  const grid = $("#analyticsGrid");
+  if (grid) {
+    grid.innerHTML = [
+      ["Всего кандидатов", total],
+      ["Трудоустроено", hired],
+      ["Активных вакансий", activeVacancies],
+      ["Собеседований", interviews]
+    ].map(([lbl, num]) => `
+      <div class="analytics-card">
+        <div class="num">${num}</div>
+        <div class="lbl">${lbl}</div>
+      </div>
+    `).join("");
+  }
+  
+  const bySource = groupCount(filtered, (c) => (SOURCES.find((s) => s.key === c.source) || { label: "прочее" }).label);
+  const byStage = groupCount(filtered, (c) => stageLabel(c.stage));
+  
+  const charts = $("#analyticsCharts");
+  if (charts) {
+    charts.innerHTML = [
+      chartBlock("По источникам", bySource),
+      chartBlock("По этапам", byStage)
+    ].join("");
+  }
+  
   // Конверсия
   const responseCount = filtered.filter(c => c.stage === "response").length;
   const selected1Count = filtered.filter(c => c.stage === "selected1").length;
-  const invitedCount = filtered.filter(c => c.stage === "invited").length;
   const hiredCount = filtered.filter(c => c.stage === "hired").length;
+  const conversion = responseCount > 0 ? Math.round(hiredCount / responseCount * 100) : 0;
   
-  const conversionToSelected = responseCount > 0 ? Math.round(selected1Count / responseCount * 100) : 0;
-  const conversionToHired = responseCount > 0 ? Math.round(hiredCount / responseCount * 100) : 0;
-  const conversionToInvited = selected1Count > 0 ? Math.round(invitedCount / selected1Count * 100) : 0;
-  
-  // Обновляем сетку
-  $("#analyticsGrid").innerHTML = [
-    ["Всего кандидатов", total, totalChange],
-    ["Трудоустроено", hired, hiredChange],
-    ["Активных вакансий", activeVacancies, 0],
-    ["Собеседований", interviews, 0]
-  ].map(([lbl, num, change]) => `
-    <div class="analytics-card">
-      <div class="num">${num}</div>
-      <div class="lbl">${lbl}</div>
-      ${change !== 0 ? `<div class="change ${change > 0 ? 'up' : 'down'}">${change > 0 ? '↑' : '↓'} ${Math.abs(change).toFixed(1)}%</div>` : ''}
-    </div>
-  `).join("");
-  
-  // Графики
-  const bySource = groupCount(filtered, (c) => (SOURCES.find((s) => s.key === c.source) || { label: "прочее" }).label);
-  const byStage = groupCount(filtered, (c) => stageLabel(c.stage));
-  const byMonth = groupCount(filtered, (c) => new Date(c.createdAt).toLocaleDateString("ru-RU", { month: "short", year: "numeric" }));
-  
-  $("#analyticsCharts").innerHTML = [
-    chartBlock("Кандидаты по источникам", bySource),
-    chartBlock("Кандидаты по этапам", byStage),
-    chartBlock("Динамика создания", byMonth)
-  ].join("");
-  
-  // Конверсия
-  $("#analyticsConversion").innerHTML = `
-    <h3>Воронка конверсии</h3>
-    <div class="conversion-grid">
-      <div class="conversion-item">
-        <div class="value">${responseCount}</div>
-        <div class="label">Отклики</div>
+  const conv = $("#analyticsConversion");
+  if (conv) {
+    conv.innerHTML = `
+      <h3>Воронка конверсии</h3>
+      <div class="conversion-grid">
+        <div class="conversion-item">
+          <div class="value">${responseCount}</div>
+          <div class="label">Отклики</div>
+        </div>
+        <div class="conversion-item">
+          <div class="value">${selected1Count}</div>
+          <div class="label">Подходящие</div>
+        </div>
+        <div class="conversion-item">
+          <div class="value">${hiredCount}</div>
+          <div class="label">Трудоустроены</div>
+          <div style="font-size:11px;color:var(--text-muted);">${conversion}%</div>
+        </div>
       </div>
-      <div class="conversion-item">
-        <div class="value">${selected1Count}</div>
-        <div class="label">Подходящие отклики</div>
-        <div style="font-size:11px;color:var(--text-muted);">${conversionToSelected}%</div>
-      </div>
-      <div class="conversion-item">
-        <div class="value">${invitedCount}</div>
-        <div class="label">Приглашённые</div>
-        <div style="font-size:11px;color:var(--text-muted);">${conversionToInvited}%</div>
-      </div>
-      <div class="conversion-item">
-        <div class="value">${hiredCount}</div>
-        <div class="label">Трудоустроены</div>
-        <div style="font-size:11px;color:var(--text-muted);">${conversionToHired}%</div>
-      </div>
-    </div>
-  `;
+    `;
+  }
 }
 
-/* ===== Автоархивация кандидатов ===== */
+function groupCount(list, keyFn) {
+  const map = {};
+  list.forEach((item) => { const k = keyFn(item) || "—"; map[k] = (map[k] || 0) + 1; });
+  return map;
+}
+
+function chartBlock(title, dataMap) {
+  const entries = Object.entries(dataMap);
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  if (!entries.length) return `<div class="chart-block"><h4>${title}</h4><span class="hint-text">нет данных</span></div>`;
+  return `<div class="chart-block"><h4>${title}</h4>${entries.map(([label, val]) => `
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${escapeHtml(label)}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${(val / max) * 100}%"></div></div>
+      <div class="chart-bar-value">${val}</div>
+    </div>`).join("")}</div>`;
+}
+
+/* ===== АВТОАРХИВАЦИЯ ===== */
 
 function checkAutoArchive() {
   const now = Date.now();
@@ -1189,7 +1250,6 @@ function checkAutoArchive() {
     
     const lastActivity = c.lastActivity || c.createdAt || 0;
     if (now - lastActivity > TWO_WEEKS) {
-      // Автоархивация
       dbUpdate(`candidates/${id}`, { 
         archived: true, 
         archivedAt: now,
@@ -1200,27 +1260,26 @@ function checkAutoArchive() {
   }
 }
 
-// Запускаем проверку каждые 6 часов
 setInterval(checkAutoArchive, 6 * 60 * 60 * 1000);
 
-/* ===== Собеседования на сегодня ===== */
+/* ===== СОБЕСЕДОВАНИЯ НА СЕГОДНЯ ===== */
 
 function renderTodayInterviews() {
-  const today = new Date();
+  const actions = $("#topbarActions");
+  if (!actions) return;
+  
   const candidates = Object.values(state.candidates || {}).filter(c => 
     !c.archived && c.interview && c.interview.date && isToday(new Date(c.interview.date).getTime())
   );
   
-  // Показываем в топбаре
-  const actions = $("#topbarActions");
   actions.innerHTML = candidates.length > 0 
     ? `<span style="background:var(--warning-bg);padding:4px 12px;border-radius:999px;font-size:12px;color:var(--warning);">📅 Собеседований сегодня: ${candidates.length}</span>`
     : "";
 }
 
-/* ===================== пользователи ===================== */
+/* ===================== ПОЛЬЗОВАТЕЛИ ===================== */
 
-$("#addUserBtn").addEventListener("click", () => {
+$("#addUserBtn")?.addEventListener("click", () => {
   $("#userForm").reset();
   $("#userUid").value = "";
   $("#userModalTitle").textContent = "Новый пользователь";
@@ -1232,8 +1291,11 @@ $("#addUserBtn").addEventListener("click", () => {
 });
 
 function renderUsersTable() {
+  const tbody = $("#usersTableBody");
+  if (!tbody) return;
+  
   const entries = Object.entries(state.users || {}).sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""));
-  $("#usersTableBody").innerHTML = entries.map(([uid, u]) => `
+  tbody.innerHTML = entries.map(([uid, u]) => `
     <tr data-uid="${uid}">
       <td>${escapeHtml(u.name)}</td>
       <td class="cell-secondary">${escapeHtml(u.email)}</td>
@@ -1261,7 +1323,7 @@ function openEditUser(uid) {
   openModal("#modalUser");
 }
 
-$("#saveUserBtn").addEventListener("click", async () => {
+$("#saveUserBtn")?.addEventListener("click", async () => {
   const uid = $("#userUid").value;
   const name = $("#uName").value.trim();
   const role = $("#uRole").value;
@@ -1293,7 +1355,7 @@ $("#saveUserBtn").addEventListener("click", async () => {
   }
 });
 
-$("#deleteUserBtn").addEventListener("click", async () => {
+$("#deleteUserBtn")?.addEventListener("click", async () => {
   const uid = $("#userUid").value;
   if (!uid || uid === state.currentUser.uid) return;
   if (!confirm("Удалить пользователя? Его кандидаты перейдут главному администратору.")) return;
@@ -1305,11 +1367,11 @@ $("#deleteUserBtn").addEventListener("click", async () => {
   await Promise.all(reassign.map(([cid]) => dbUpdate(`candidates/${cid}`, { recruiterId: mainAdminId })));
 
   await dbRemove(`users/${uid}`);
-  toast("Профиль пользователя удалён из системы. Учётную запись Firebase Auth нужно удалить вручную в консоли Firebase — из клиента это не разрешено.");
+  toast("Профиль пользователя удалён");
   closeModal("#modalUser");
 });
 
-/* ===================== настройки ===================== */
+/* ===================== НАСТРОЙКИ ===================== */
 
 function openSettingsModal() {
   $("#settingsName").value = state.currentUser.name || "";
@@ -1320,7 +1382,7 @@ function openSettingsModal() {
   openModal("#modalSettings");
 }
 
-$("#settingsTabs").addEventListener("click", (e) => {
+$("#settingsTabs")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".settings-tab");
   if (!btn) return;
   $all(".settings-tab").forEach((t) => t.classList.toggle("active", t === btn));
@@ -1329,7 +1391,7 @@ $("#settingsTabs").addEventListener("click", (e) => {
 
 $all(".theme-option").forEach((btn) => btn.addEventListener("click", () => applyTheme(btn.dataset.theme)));
 
-$("#saveProfileBtn").addEventListener("click", async () => {
+$("#saveProfileBtn")?.addEventListener("click", async () => {
   const name = $("#settingsName").value.trim();
   const phone = $("#settingsPhone").value.trim();
   const newPass = $("#settingsNewPassword").value;
@@ -1343,16 +1405,16 @@ $("#saveProfileBtn").addEventListener("click", async () => {
       await updatePassword(auth.currentUser, newPass);
       toast("Профиль и пароль обновлены");
     } catch (err) {
-      toast("Имя сохранено, но пароль не изменён: нужен повторный вход для смены пароля (" + err.code + ")", "error");
+      toast("Имя сохранено, но пароль не изменён", "error");
     }
   } else {
     toast("Профиль сохранён");
   }
 });
 
-/* ---- резервное копирование ---- */
+/* ---- РЕЗЕРВНОЕ КОПИРОВАНИЕ ---- */
 
-$("#exportBtn").addEventListener("click", () => {
+$("#exportBtn")?.addEventListener("click", () => {
   const payload = { users: state.users, vacancies: state.vacancies, candidates: state.candidates, exportedAt: nowStamp() };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -1361,8 +1423,12 @@ $("#exportBtn").addEventListener("click", () => {
   a.click();
 });
 
-$("#importBtn").addEventListener("click", () => $("#importFile").click());
-$("#importFile").addEventListener("change", async () => {
+$("#importBtn")?.addEventListener("click", () => {
+  const input = $("#importFile");
+  if (input) input.click();
+});
+
+$("#importFile")?.addEventListener("change", async () => {
   const file = $("#importFile").files[0];
   if (!file) return;
   if (!confirm("Импорт полностью перезапишет текущую базу данных. Продолжить?")) { $("#importFile").value = ""; return; }
@@ -1378,7 +1444,7 @@ $("#importFile").addEventListener("change", async () => {
   $("#importFile").value = "";
 });
 
-/* ===================== глобальный поиск (Ctrl+K) ===================== */
+/* ===================== ГЛОБАЛЬНЫЙ ПОИСК ===================== */
 
 function openGlobalSearch() {
   $("#globalSearchInput").value = "";
@@ -1387,20 +1453,31 @@ function openGlobalSearch() {
   setTimeout(() => $("#globalSearchInput").focus(), 50);
 }
 
-$("#topSearchBox").addEventListener("click", openGlobalSearch);
-$("#globalSearchInput").addEventListener("input", (e) => renderGlobalSearchResults(e.target.value.trim().toLowerCase()));
+$("#topSearchBox")?.addEventListener("click", openGlobalSearch);
+
+$("#globalSearchInput")?.addEventListener("input", (e) => {
+  renderGlobalSearchResults(e.target.value.trim().toLowerCase());
+});
 
 function renderGlobalSearchResults(term) {
   const results = $("#globalSearchResults");
-  if (!term) { results.innerHTML = '<div class="search-empty">начните вводить имя, телефон или название вакансии</div>'; return; }
+  if (!results) return;
+  
+  if (!term) { 
+    results.innerHTML = '<div class="search-empty">начните вводить имя, телефон или название вакансии</div>'; 
+    return; 
+  }
 
-  const vac = Object.entries(state.vacancies).filter(([, v]) => (v.title || "").toLowerCase().includes(term));
-  const cand = Object.entries(state.candidates).filter(([, c]) => 
+  const vac = Object.entries(state.vacancies || {}).filter(([, v]) => (v.title || "").toLowerCase().includes(term));
+  const cand = Object.entries(state.candidates || {}).filter(([, c]) => 
     (c.name || "").toLowerCase().includes(term) || 
     (c.phone || "").toLowerCase().includes(term)
   );
 
-  if (!vac.length && !cand.length) { results.innerHTML = '<div class="search-empty">ничего не найдено</div>'; return; }
+  if (!vac.length && !cand.length) { 
+    results.innerHTML = '<div class="search-empty">ничего не найдено</div>'; 
+    return; 
+  }
 
   let html = "";
   vac.forEach(([id, v]) => {
@@ -1433,34 +1510,16 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") $all(".modal-overlay:not(.hidden)").forEach((m) => m.classList.add("hidden"));
 });
 
-/* ===================== общие обработчики модалок ===================== */
+/* ===================== ОБЩИЕ ОБРАБОТЧИКИ ===================== */
 
 $all(".modal-overlay").forEach((overlay) => {
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.classList.add("hidden"); });
+  overlay.addEventListener("click", (e) => { 
+    if (e.target === overlay) overlay.classList.add("hidden"); 
+  });
   $all("[data-close]", overlay).forEach((btn) => btn.addEventListener("click", () => overlay.classList.add("hidden")));
 });
 
-/* ===================== утилиты для аналитики ===================== */
-
-function groupCount(list, keyFn) {
-  const map = {};
-  list.forEach((item) => { const k = keyFn(item) || "—"; map[k] = (map[k] || 0) + 1; });
-  return map;
-}
-
-function chartBlock(title, dataMap) {
-  const entries = Object.entries(dataMap);
-  const max = Math.max(1, ...entries.map(([, v]) => v));
-  if (!entries.length) return `<div class="chart-block"><h4>${title}</h4><span class="hint-text">нет данных</span></div>`;
-  return `<div class="chart-block"><h4>${title}</h4>${entries.map(([label, val]) => `
-    <div class="chart-bar-row">
-      <div class="chart-bar-label">${escapeHtml(label)}</div>
-      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${(val / max) * 100}%"></div></div>
-      <div class="chart-bar-value">${val}</div>
-    </div>`).join("")}</div>`;
-}
-
-/* ===================== старт ===================== */
+/* ===================== СТАРТ ===================== */
 
 applyTheme(state.theme);
 initAuth();
