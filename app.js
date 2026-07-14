@@ -13,7 +13,7 @@ import { getAuth as getAuthSecondary, createUserWithEmailAndPassword, signOut as
 
 const STAGES = [
   { key: "response", label: "Отклик" },
-  { key: "selected1", label: "Отобрано" },
+  { key: "selected1", label: "Подходящий отклик" },
   { key: "invited", label: "Приглашён" },
   { key: "form", label: "Анкета" },
   { key: "interview", label: "Собеседование" },
@@ -21,6 +21,8 @@ const STAGES = [
   { key: "director", label: "Собеседование с директором" },
   { key: "hired", label: "Трудоустройство" }
 ];
+
+const STAGES_FOR_AUTO_ARCHIVE = ["response", "selected1", "invited"]; // этапы для автоархивации
 
 // правила проверки перехода между этапами — легко расширяется новыми объектами
 const STAGE_TRANSITION_RULES = [
@@ -41,7 +43,7 @@ const SOURCES = [
 /* ===================== состояние ===================== */
 
 const state = {
-  currentUser: null, // { uid, name, email, role }
+  currentUser: null, // { uid, name, email, role, phone }
   users: {},
   vacancies: {},
   candidates: {},
@@ -50,7 +52,10 @@ const state = {
   currentCandidateId: null,
   notesTimer: null,
   historyDebounceTimer: null,
-  theme: localStorage.getItem("demcrm_theme") || "light"
+  theme: localStorage.getItem("demcrm_theme") || "light",
+  analyticsDate: new Date(),
+  analyticsPeriod: "day",
+  missedInterviewCount: {} // для отслеживания пропусков собеседований
 };
 
 /* ===================== утилиты ===================== */
@@ -81,6 +86,10 @@ function isSameDay(ts, date2 = new Date()) {
   return d.getFullYear() === date2.getFullYear() && d.getMonth() === date2.getMonth() && d.getDate() === date2.getDate();
 }
 
+function isToday(ts) {
+  return isSameDay(ts);
+}
+
 function initials(name) {
   if (!name) return "?";
   return name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
@@ -106,6 +115,37 @@ function closeModal(id) { $(id).classList.add("hidden"); }
 function debounce(fn, delay) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+}
+
+function formatPhone(phone) {
+  if (!phone) return "";
+  // Убираем все кроме цифр
+  let cleaned = String(phone).replace(/\D/g, "");
+  if (cleaned.length === 11 && cleaned.startsWith("7")) {
+    return `7 ${cleaned.slice(1, 4)} ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
+  }
+  if (cleaned.length === 10) {
+    return `7 ${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)}-${cleaned.slice(6, 8)}-${cleaned.slice(8, 10)}`;
+  }
+  return phone;
+}
+
+function parsePhone(phone) {
+  if (!phone) return "";
+  return String(phone).replace(/\D/g, "");
+}
+
+function getTagsArray(tagsStr) {
+  if (!tagsStr) return [];
+  return tagsStr.split(",").map(t => t.trim()).filter(t => t);
+}
+
+function tagsToString(tagsArray) {
+  return tagsArray.join(", ");
+}
+
+function getStageIndex(key) {
+  return STAGES.findIndex(s => s.key === key);
 }
 
 /* ===================== тема ===================== */
@@ -167,6 +207,8 @@ function initAuth() {
     applyRoleUI();
     startDataWatchers();
     switchView("vacancies");
+    // Запускаем проверку автоархивации
+    checkAutoArchive();
   });
 }
 
@@ -188,18 +230,32 @@ document.body.addEventListener("click", (e) => {
 /* ===================== вотчеры данных ===================== */
 
 function startDataWatchers() {
-  dbWatch("users", (data) => { state.users = data || {}; renderUsersTable(); populateGlobalCaches(); });
+  dbWatch("users", (data) => { state.users = data || {}; renderUsersTable(); populateGlobalCaches(); populateManagerSelects(); });
   dbWatch("vacancies", (data) => { state.vacancies = data || {}; renderVacancies(); populateFilterOptions(); renderKanbanIfOpen(); });
   dbWatch("candidates", (data) => {
     state.candidates = data || {};
     renderVacancies();
     renderKanbanIfOpen();
     renderCandidatesTable();
+    renderAnalytics();
+    renderTodayInterviews();
     if (state.currentCandidateId) refreshOpenCandidateModal();
+    checkAutoArchive();
   });
 }
 
 function populateGlobalCaches() {}
+
+function populateManagerSelects() {
+  const select = $("#vManager");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">Выберите руководителя</option>' + 
+    Object.entries(state.users || {}).map(([uid, u]) => 
+      `<option value="${uid}">${escapeHtml(u.name)}</option>`
+    ).join("");
+  select.value = current;
+}
 
 /* ===================== навигация ===================== */
 
@@ -208,6 +264,7 @@ function switchView(name) {
   $(`#view-${name}`).classList.add("active");
   $all(".nav-item[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   if (name === "candidates") renderCandidatesTable();
+  if (name === "analytics") renderAnalytics();
 }
 
 $all(".nav-item[data-view]").forEach((btn) => {
@@ -253,13 +310,14 @@ function renderVacancies() {
     const stats = vacancyStats(id);
     const positions = Number(v.positions) || 0;
     const progress = positions > 0 ? Math.min(100, Math.round((stats.hired / positions) * 100)) : 0;
+    const manager = state.users[v.managerId];
     return `
       <div class="vacancy-card" data-id="${id}">
         <div class="vc-top">
           <span class="status-badge status-${escapeHtml(v.status)}">${escapeHtml(v.status)}</span>
         </div>
         <div class="vc-title">${escapeHtml(v.title)}</div>
-        <div class="vc-manager">${escapeHtml(v.manager || "")}</div>
+        <div class="vc-manager">${escapeHtml(manager ? manager.name : v.manager || "")} ${v.managerPhone ? '· ' + escapeHtml(v.managerPhone) : ''}</div>
         <div class="vc-metrics">
           <div class="vc-metric"><b>${positions}</b><span>мест</span></div>
           <div class="vc-metric"><b>${stats.total}</b><span>кандидатов</span></div>
@@ -286,10 +344,12 @@ function openVacancyModal(id) {
   $("#deleteVacancyBtn").classList.toggle("hidden", !isEdit);
   $("#vacancyForm").reset();
   $("#vacancyId").value = id || "";
+  populateManagerSelects();
   if (isEdit) {
     const v = state.vacancies[id];
     $("#vTitle").value = v.title || "";
-    $("#vManager").value = v.manager || "";
+    $("#vManager").value = v.managerId || "";
+    $("#vManagerPhone").value = v.managerPhone || "";
     $("#vDescription").value = v.description || "";
     $("#vPositions").value = v.positions || 1;
     $("#vStatus").value = v.status || "активна";
@@ -306,9 +366,13 @@ function openVacancyModal(id) {
 $("#saveVacancyBtn").addEventListener("click", async () => {
   if (!$("#vacancyForm").reportValidity()) return;
   const id = $("#vacancyId").value || dbPushKey("vacancies");
+  const managerId = $("#vManager").value;
+  const manager = state.users[managerId];
   const payload = {
     title: $("#vTitle").value.trim(),
-    manager: $("#vManager").value.trim(),
+    managerId: managerId,
+    manager: manager ? manager.name : "",
+    managerPhone: $("#vManagerPhone").value.trim(),
     description: $("#vDescription").value.trim(),
     positions: Number($("#vPositions").value) || 1,
     status: $("#vStatus").value,
@@ -376,13 +440,17 @@ function renderKanban() {
 function renderKcard(id, c) {
   const tags = [];
   if (!c.documents || !c.documents.anketa) tags.push('<span class="tag tag-no-anketa">нет анкеты</span>');
-  if (c.interview && c.interview.date && isSameDay(new Date(c.interview.date).getTime())) tags.push('<span class="tag tag-today">собеседование сегодня</span>');
+  if (c.interview && c.interview.date && isToday(new Date(c.interview.date).getTime())) tags.push('<span class="tag tag-today">собеседование сегодня</span>');
   if (c.stage === "hired") tags.push('<span class="tag tag-hired">трудоустроен</span>');
+  if (c.archived) tags.push('<span class="tag tag-archived">архивный</span>');
+  if (c.tags && c.tags.includes("черный список")) tags.push('<span class="tag tag-blacklist">черный список</span>');
+  if (c.missedCount && c.missedCount >= 3) tags.push('<span class="tag tag-blacklist">черный список</span>');
+  
   const recruiter = state.users[c.recruiterId];
   return `
     <div class="kcard" draggable="true" data-id="${id}">
       <div class="kcard-name">${escapeHtml(c.name)}</div>
-      <div class="kcard-phone">${escapeHtml(c.phone || "")}</div>
+      <div class="kcard-phone">${escapeHtml(formatPhone(c.phone || ""))}</div>
       <div class="kcard-tags">${tags.join("")}</div>
       <div class="kcard-footer">
         <div class="kcard-avatar" title="${escapeHtml(recruiter ? recruiter.name : "")}">${initials(recruiter ? recruiter.name : "?")}</div>
@@ -445,22 +513,153 @@ $("#continueStageBtn").addEventListener("click", async () => {
 
 $("#addCandidateBtn").addEventListener("click", () => {
   $("#addCandidateForm").reset();
+  $("#candidateExistsWarning").classList.add("hidden");
+  $("#cAddSource").value = "прочее";
+  updateCustomSelect("cAddSourceSelect", "cAddSourceOptions", "прочее");
   openModal("#modalAddCandidate");
 });
 
+// Кастомные селекты
+function initCustomSelects() {
+  document.addEventListener("click", (e) => {
+    const trigger = e.target.closest(".custom-select-trigger");
+    if (trigger) {
+      const targetId = trigger.dataset.target;
+      const options = document.getElementById(targetId);
+      if (options) {
+        const isOpen = !options.classList.contains("hidden");
+        // Закрываем все открытые
+        $all(".custom-select-options").forEach(o => o.classList.add("hidden"));
+        $all(".custom-select-trigger").forEach(t => t.classList.remove("active"));
+        if (!isOpen) {
+          options.classList.remove("hidden");
+          trigger.classList.add("active");
+        }
+      }
+      return;
+    }
+    
+    const option = e.target.closest(".custom-select-option");
+    if (option) {
+      const value = option.dataset.value;
+      const container = option.closest(".custom-select-options");
+      const trigger = container.parentElement.querySelector(".custom-select-trigger");
+      const hiddenInput = container.parentElement.parentElement.querySelector('input[type="hidden"]');
+      if (trigger) {
+        trigger.textContent = option.textContent;
+        trigger.classList.remove("active");
+      }
+      if (hiddenInput) {
+        hiddenInput.value = value;
+      }
+      container.classList.add("hidden");
+      // trigger change event
+      if (hiddenInput) {
+        hiddenInput.dispatchEvent(new Event('change'));
+      }
+      return;
+    }
+    
+    // Закрываем все при клике вне
+    if (!e.target.closest(".custom-select")) {
+      $all(".custom-select-options").forEach(o => o.classList.add("hidden"));
+      $all(".custom-select-trigger").forEach(t => t.classList.remove("active"));
+    }
+  });
+}
+
+function updateCustomSelect(triggerId, optionsId, value) {
+  const trigger = document.getElementById(triggerId);
+  const options = document.getElementById(optionsId);
+  const hiddenInput = options ? options.parentElement.parentElement.querySelector('input[type="hidden"]') : null;
+  
+  if (trigger) {
+    const selectedOption = options ? options.querySelector(`.custom-select-option[data-value="${value}"]`) : null;
+    if (selectedOption) {
+      trigger.textContent = selectedOption.textContent;
+    }
+    // Убираем выделение со всех опций
+    if (options) {
+      options.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+      const opt = options.querySelector(`.custom-select-option[data-value="${value}"]`);
+      if (opt) opt.classList.add('selected');
+    }
+  }
+  if (hiddenInput) {
+    hiddenInput.value = value;
+  }
+}
+
+// Инициализация кастомных селектов
+initCustomSelects();
+
+// Проверка существования кандидата
+function findExistingCandidate(name, phone) {
+  const candidates = Object.entries(state.candidates || {});
+  const phoneClean = parsePhone(phone);
+  for (const [id, c] of candidates) {
+    if (c.archived) continue;
+    const cPhone = parsePhone(c.phone || "");
+    if (c.name && name && c.name.toLowerCase() === name.toLowerCase()) {
+      return { id, candidate: c };
+    }
+    if (phoneClean && cPhone === phoneClean) {
+      return { id, candidate: c };
+    }
+  }
+  return null;
+}
+
+$("#cAddName, #cAddPhone").oninput = function() {
+  const name = $("#cAddName").value.trim();
+  const phone = $("#cAddPhone").value.trim();
+  if (name || phone) {
+    const existing = findExistingCandidate(name, phone);
+    const warning = $("#candidateExistsWarning");
+    if (existing) {
+      warning.classList.remove("hidden");
+      $("#gotoExistingCandidate").onclick = (e) => {
+        e.preventDefault();
+        closeModal("#modalAddCandidate");
+        const c = existing.candidate;
+        if (c.vacancyId) openKanban(c.vacancyId);
+        openCandidateModal(existing.id);
+      };
+    } else {
+      warning.classList.add("hidden");
+    }
+  }
+};
+
 $("#saveAddCandidateBtn").addEventListener("click", async () => {
   if (!$("#addCandidateForm").reportValidity()) return;
+  
+  const name = $("#cAddName").value.trim();
+  const phone = $("#cAddPhone").value.trim();
+  
+  // Проверяем существует ли кандидат
+  const existing = findExistingCandidate(name, phone);
+  if (existing) {
+    toast("Кандидат уже существует в базе", "error");
+    return;
+  }
+  
   const id = dbPushKey("candidates");
+  const tags = getTagsArray($("#cAddTags").value);
+  
   const payload = {
-    name: $("#cAddName").value.trim(),
-    phone: $("#cAddPhone").value.trim(),
-    source: $("#cAddSource").value,
+    name: name,
+    phone: phone,
+    source: $("#cAddSource").value || "прочее",
     vacancyId: state.activeVacancyId,
     stage: "response",
     recruiterId: state.currentUser.uid,
     createdAt: nowStamp(),
     notes: "",
-    documents: {}
+    documents: {},
+    tags: tags,
+    missedCount: 0,
+    lastActivity: nowStamp()
   };
   await dbSet(`candidates/${id}`, payload);
   await pushHistory(id, "создал(а) кандидата");
@@ -492,12 +691,17 @@ function renderCandidateModal(id) {
   $("#candidateModalName").textContent = c.name || "Кандидат";
   $("#candName").value = c.name || "";
   $("#candPhone").value = c.phone || "";
+  
+  // Обновляем кастомный селект для источника
+  updateCustomSelect("candSourceSelect", "candSourceOptions", c.source || "прочее");
   $("#candSource").value = c.source || "прочее";
-  $("#candNotes").value = c.notes || "";
 
   const vacSelect = $("#candVacancy");
   vacSelect.innerHTML = Object.entries(state.vacancies).map(([vid, v]) => `<option value="${vid}">${escapeHtml(v.title)}</option>`).join("");
   vacSelect.value = c.vacancyId || "";
+
+  // Теги
+  $("#candTagsInput").value = (c.tags && Array.isArray(c.tags)) ? c.tags.join(", ") : "";
 
   $("#candStageValue").textContent = stageLabel(c.stage);
   $("#candCreatedValue").textContent = formatDate(c.createdAt);
@@ -517,9 +721,21 @@ function renderCandidateModal(id) {
 
   const tags = [];
   if (!anketa) tags.push('<span class="tag tag-no-anketa">нет анкеты</span>');
-  if (c.interview && c.interview.date && isSameDay(new Date(c.interview.date).getTime())) tags.push('<span class="tag tag-today">собеседование сегодня</span>');
+  if (c.interview && c.interview.date && isToday(new Date(c.interview.date).getTime())) tags.push('<span class="tag tag-today">собеседование сегодня</span>');
   if (c.stage === "hired") tags.push('<span class="tag tag-hired">трудоустроен</span>');
   if (c.archived) tags.push('<span class="tag tag-archived">архивный</span>');
+  if (c.tags && Array.isArray(c.tags)) {
+    c.tags.forEach(t => {
+      if (t === "черный список") tags.push('<span class="tag tag-blacklist">черный список</span>');
+      else if (t) tags.push(`<span class="tag" style="background:var(--border);color:var(--text);">${escapeHtml(t)}</span>`);
+    });
+  }
+  if (c.missedCount && c.missedCount >= 3) {
+    tags.push('<span class="tag tag-blacklist">черный список (3+ пропусков)</span>');
+  }
+  if (c.missedCount && c.missedCount > 0 && c.missedCount < 3) {
+    tags.push(`<span class="tag tag-missed">пропусков: ${c.missedCount}</span>`);
+  }
   $("#candTags").innerHTML = tags.join("");
 
   const history = Object.values(c.history || {}).sort((a, b) => b.time - a.time);
@@ -527,21 +743,30 @@ function renderCandidateModal(id) {
     ? history.map((h) => `<div class="history-item"><b>${escapeHtml(h.user)}</b> ${escapeHtml(h.action)} <span class="history-time">· ${formatDateTime(h.time)}</span></div>`).join("")
     : '<div class="history-item">пока пусто</div>';
 
-  $all("#modalCandidate input, #modalCandidate select, #modalCandidate textarea").forEach((el) => { el.disabled = !editable; });
+  $all("#modalCandidate input, #modalCandidate select, #modalCandidate textarea").forEach((el) => { 
+    if (el.id !== "candInterviewDate" && el.id !== "candInterviewTime" && el.id !== "candInterviewComment") {
+      el.disabled = !editable;
+    }
+  });
   $("#saveCandidateBtn").classList.toggle("hidden", !editable);
   $("#archiveCandidateBtn").classList.toggle("hidden", !editable);
   $("#deleteCandidateBtn").classList.toggle("hidden", state.currentUser.role !== "администратор");
+  $("#candMissInterviewBtn").classList.toggle("hidden", !editable);
 }
 
 $("#saveCandidateBtn").addEventListener("click", async () => {
   const id = state.currentCandidateId;
   const c = state.candidates[id];
   if (!c || !canEditCandidate(c)) return;
+  
+  const tags = getTagsArray($("#candTagsInput").value);
+  
   const updates = {
     name: $("#candName").value.trim(),
     phone: $("#candPhone").value.trim(),
     vacancyId: $("#candVacancy").value,
     source: $("#candSource").value,
+    tags: tags,
     interview: {
       date: $("#candInterviewDate").value,
       time: $("#candInterviewTime").value,
@@ -551,6 +776,32 @@ $("#saveCandidateBtn").addEventListener("click", async () => {
   await dbUpdate(`candidates/${id}`, updates);
   await pushHistory(id, "обновил(а) данные кандидата");
   toast("Сохранено");
+});
+
+// Пометка "не пришёл на собеседование"
+$("#candMissInterviewBtn").addEventListener("click", async () => {
+  const id = state.currentCandidateId;
+  const c = state.candidates[id];
+  if (!c) return;
+  
+  const missedCount = (c.missedCount || 0) + 1;
+  const updates = { missedCount: missedCount };
+  
+  // Если 3 пропуска - добавляем тег "черный список"
+  if (missedCount >= 3) {
+    const tags = c.tags || [];
+    if (!tags.includes("черный список")) {
+      tags.push("черный список");
+      updates.tags = tags;
+    }
+    toast("Кандидат добавлен в черный список (3 пропуска собеседования)", "error");
+  } else {
+    toast(`Пропуск ${missedCount}/3`, "info");
+  }
+  
+  await dbUpdate(`candidates/${id}`, updates);
+  await pushHistory(id, `пропустил(а) собеседование (${missedCount}/3)`);
+  renderCandidateModal(id);
 });
 
 $("#archiveCandidateBtn").addEventListener("click", async () => {
@@ -572,7 +823,7 @@ $("#deleteCandidateBtn").addEventListener("click", async () => {
   toast("Кандидат удалён");
 });
 
-// автосохранение заметок
+// Автосохранение заметок
 $("#candNotes").addEventListener("input", () => {
   const id = state.currentCandidateId;
   clearTimeout(state.notesTimer);
@@ -613,6 +864,7 @@ bindDocDrop("#dropResume", "#fileResume", "resume");
 async function uploadCandidateDoc(docType, file) {
   const id = state.currentCandidateId;
   if (file.type !== "application/pdf") { toast("Нужен PDF-файл", "error"); return; }
+  if (file.size > 5 * 1024 * 1024) { toast("Файл слишком большой (макс 5MB)", "error"); return; }
   toast("Загружаем файл...");
   try {
     const path = `documents/${id}/${docType}_${Date.now()}.pdf`;
@@ -665,7 +917,9 @@ function renderCandidatesTable() {
   if (term) {
     entries = entries.filter(([, c]) => {
       const vacTitle = (state.vacancies[c.vacancyId] || {}).title || "";
-      return (c.name || "").toLowerCase().includes(term) || (c.phone || "").toLowerCase().includes(term) || vacTitle.toLowerCase().includes(term);
+      return (c.name || "").toLowerCase().includes(term) || 
+             (c.phone || "").toLowerCase().includes(term) || 
+             vacTitle.toLowerCase().includes(term);
     });
   }
   entries.sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
@@ -674,13 +928,15 @@ function renderCandidatesTable() {
   $("#candidatesTableBody").innerHTML = entries.map(([id, c]) => {
     const vac = state.vacancies[c.vacancyId];
     const rec = state.users[c.recruiterId];
+    const tagsDisplay = (c.tags && Array.isArray(c.tags)) ? c.tags.slice(0, 2).join(", ") + (c.tags.length > 2 ? "..." : "") : "";
     return `
       <tr data-id="${id}">
         <td>${escapeHtml(c.name)}</td>
-        <td class="cell-secondary">${escapeHtml(c.phone || "")}</td>
+        <td class="cell-secondary">${escapeHtml(formatPhone(c.phone || ""))}</td>
         <td class="cell-secondary">${escapeHtml(vac ? vac.title : "—")}</td>
         <td>${escapeHtml(stageLabel(c.stage))}</td>
         <td class="cell-secondary">${escapeHtml(c.source || "")}</td>
+        <td class="cell-secondary" style="font-size:11px;">${escapeHtml(tagsDisplay)}</td>
         <td class="cell-secondary">${formatDate(c.createdAt)}</td>
         <td class="cell-secondary">${escapeHtml(rec ? rec.name : "—")}</td>
       </tr>`;
@@ -689,6 +945,277 @@ function renderCandidatesTable() {
   $all("#candidatesTableBody tr").forEach((row) => {
     row.addEventListener("click", () => openCandidateModal(row.dataset.id));
   });
+}
+
+/* ===================== импорт/экспорт кандидатов ===================== */
+
+$("#exportCandidatesBtn").addEventListener("click", () => {
+  const candidates = Object.entries(state.candidates || {}).map(([id, c]) => ({
+    id,
+    name: c.name || "",
+    phone: c.phone || "",
+    source: c.source || "",
+    stage: c.stage || "",
+    vacancyTitle: (state.vacancies[c.vacancyId] || {}).title || "",
+    createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : "",
+    notes: c.notes || "",
+    tags: (c.tags && Array.isArray(c.tags)) ? c.tags.join(", ") : "",
+    archived: c.archived || false
+  }));
+  
+  const blob = new Blob([JSON.stringify(candidates, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `candidates-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  toast("Кандидаты экспортированы");
+});
+
+$("#importCandidatesBtn").addEventListener("click", () => $("#importCandidatesFile").click());
+$("#importCandidatesFile").addEventListener("change", async () => {
+  const file = $("#importCandidatesFile").files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) { toast("Неверный формат файла", "error"); return; }
+    
+    let count = 0;
+    for (const item of data) {
+      const id = item.id || dbPushKey("candidates");
+      const payload = {
+        name: item.name || "Без имени",
+        phone: item.phone || "",
+        source: item.source || "прочее",
+        stage: item.stage || "response",
+        recruiterId: state.currentUser.uid,
+        createdAt: item.createdAt ? new Date(item.createdAt).getTime() : nowStamp(),
+        notes: item.notes || "",
+        documents: {},
+        tags: item.tags ? item.tags.split(",").map(t => t.trim()).filter(t => t) : [],
+        archived: item.archived || false,
+        missedCount: 0
+      };
+      
+      // Находим вакансию по названию
+      if (item.vacancyTitle) {
+        const vac = Object.entries(state.vacancies).find(([, v]) => v.title === item.vacancyTitle);
+        if (vac) payload.vacancyId = vac[0];
+      }
+      
+      await dbSet(`candidates/${id}`, payload);
+      count++;
+    }
+    toast(`Импортировано ${count} кандидатов`);
+  } catch (err) {
+    toast("Ошибка импорта: " + err.message, "error");
+  }
+  $("#importCandidatesFile").value = "";
+});
+
+/* ===================== АНАЛИТИКА ===================== */
+
+// Период для аналитики
+$("#analyticsPeriodFilter").addEventListener("click", (e) => {
+  const btn = e.target.closest(".pill");
+  if (!btn) return;
+  state.analyticsPeriod = btn.dataset.period;
+  $all("#analyticsPeriodFilter .pill").forEach((p) => p.classList.toggle("active", p === btn));
+  renderAnalytics();
+});
+
+$("#analyticsDate").addEventListener("change", () => {
+  const val = $("#analyticsDate").value;
+  if (val) {
+    state.analyticsDate = new Date(val);
+  } else {
+    state.analyticsDate = new Date();
+  }
+  renderAnalytics();
+});
+
+function getPeriodRange(date, period) {
+  const start = new Date(date);
+  const end = new Date(date);
+  
+  switch(period) {
+    case "day":
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "week":
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+      start.setDate(diff);
+      start.setHours(0, 0, 0, 0);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "month":
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end.setMonth(end.getMonth() + 1, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case "year":
+      start.setMonth(0, 1);
+      start.setHours(0, 0, 0, 0);
+      end.setMonth(11, 31);
+      end.setHours(23, 59, 59, 999);
+      break;
+  }
+  return { start, end };
+}
+
+function getPrevPeriodRange(date, period) {
+  const prev = new Date(date);
+  switch(period) {
+    case "day": prev.setDate(prev.getDate() - 1); break;
+    case "week": prev.setDate(prev.getDate() - 7); break;
+    case "month": prev.setMonth(prev.getMonth() - 1); break;
+    case "year": prev.setFullYear(prev.getFullYear() - 1); break;
+  }
+  return getPeriodRange(prev, period);
+}
+
+function renderAnalytics() {
+  const candidates = Object.values(state.candidates || {});
+  const vacancies = Object.values(state.vacancies || {});
+  
+  const date = state.analyticsDate || new Date();
+  const period = state.analyticsPeriod || "month";
+  const range = getPeriodRange(date, period);
+  const prevRange = getPrevPeriodRange(date, period);
+  
+  // Фильтруем по дате создания
+  const filtered = candidates.filter(c => {
+    if (c.archived) return false;
+    return c.createdAt >= range.start.getTime() && c.createdAt <= range.end.getTime();
+  });
+  
+  const prevFiltered = candidates.filter(c => {
+    if (c.archived) return false;
+    return c.createdAt >= prevRange.start.getTime() && c.createdAt <= prevRange.end.getTime();
+  });
+  
+  // Статистика
+  const total = filtered.length;
+  const prevTotal = prevFiltered.length;
+  const totalChange = prevTotal > 0 ? ((total - prevTotal) / prevTotal * 100) : 0;
+  
+  const hired = filtered.filter(c => c.stage === "hired").length;
+  const prevHired = prevFiltered.filter(c => c.stage === "hired").length;
+  const hiredChange = prevHired > 0 ? ((hired - prevHired) / prevHired * 100) : 0;
+  
+  const activeVacancies = vacancies.filter(v => v.status === "активна").length;
+  
+  const interviews = filtered.filter(c => c.interview && c.interview.date && 
+    new Date(c.interview.date).getTime() >= range.start.getTime() && 
+    new Date(c.interview.date).getTime() <= range.end.getTime()
+  ).length;
+  
+  // Конверсия
+  const responseCount = filtered.filter(c => c.stage === "response").length;
+  const selected1Count = filtered.filter(c => c.stage === "selected1").length;
+  const invitedCount = filtered.filter(c => c.stage === "invited").length;
+  const hiredCount = filtered.filter(c => c.stage === "hired").length;
+  
+  const conversionToSelected = responseCount > 0 ? Math.round(selected1Count / responseCount * 100) : 0;
+  const conversionToHired = responseCount > 0 ? Math.round(hiredCount / responseCount * 100) : 0;
+  const conversionToInvited = selected1Count > 0 ? Math.round(invitedCount / selected1Count * 100) : 0;
+  
+  // Обновляем сетку
+  $("#analyticsGrid").innerHTML = [
+    ["Всего кандидатов", total, totalChange],
+    ["Трудоустроено", hired, hiredChange],
+    ["Активных вакансий", activeVacancies, 0],
+    ["Собеседований", interviews, 0]
+  ].map(([lbl, num, change]) => `
+    <div class="analytics-card">
+      <div class="num">${num}</div>
+      <div class="lbl">${lbl}</div>
+      ${change !== 0 ? `<div class="change ${change > 0 ? 'up' : 'down'}">${change > 0 ? '↑' : '↓'} ${Math.abs(change).toFixed(1)}%</div>` : ''}
+    </div>
+  `).join("");
+  
+  // Графики
+  const bySource = groupCount(filtered, (c) => (SOURCES.find((s) => s.key === c.source) || { label: "прочее" }).label);
+  const byStage = groupCount(filtered, (c) => stageLabel(c.stage));
+  const byMonth = groupCount(filtered, (c) => new Date(c.createdAt).toLocaleDateString("ru-RU", { month: "short", year: "numeric" }));
+  
+  $("#analyticsCharts").innerHTML = [
+    chartBlock("Кандидаты по источникам", bySource),
+    chartBlock("Кандидаты по этапам", byStage),
+    chartBlock("Динамика создания", byMonth)
+  ].join("");
+  
+  // Конверсия
+  $("#analyticsConversion").innerHTML = `
+    <h3>Воронка конверсии</h3>
+    <div class="conversion-grid">
+      <div class="conversion-item">
+        <div class="value">${responseCount}</div>
+        <div class="label">Отклики</div>
+      </div>
+      <div class="conversion-item">
+        <div class="value">${selected1Count}</div>
+        <div class="label">Подходящие отклики</div>
+        <div style="font-size:11px;color:var(--text-muted);">${conversionToSelected}%</div>
+      </div>
+      <div class="conversion-item">
+        <div class="value">${invitedCount}</div>
+        <div class="label">Приглашённые</div>
+        <div style="font-size:11px;color:var(--text-muted);">${conversionToInvited}%</div>
+      </div>
+      <div class="conversion-item">
+        <div class="value">${hiredCount}</div>
+        <div class="label">Трудоустроены</div>
+        <div style="font-size:11px;color:var(--text-muted);">${conversionToHired}%</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ===== Автоархивация кандидатов ===== */
+
+function checkAutoArchive() {
+  const now = Date.now();
+  const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000;
+  
+  const candidates = Object.entries(state.candidates || {});
+  for (const [id, c] of candidates) {
+    if (c.archived) continue;
+    if (!STAGES_FOR_AUTO_ARCHIVE.includes(c.stage)) continue;
+    
+    const lastActivity = c.lastActivity || c.createdAt || 0;
+    if (now - lastActivity > TWO_WEEKS) {
+      // Автоархивация
+      dbUpdate(`candidates/${id}`, { 
+        archived: true, 
+        archivedAt: now,
+        archivedReason: "не вышел на связь"
+      });
+      pushHistory(id, "автоматически архивирован (не вышел на связь)");
+    }
+  }
+}
+
+// Запускаем проверку каждые 6 часов
+setInterval(checkAutoArchive, 6 * 60 * 60 * 1000);
+
+/* ===== Собеседования на сегодня ===== */
+
+function renderTodayInterviews() {
+  const today = new Date();
+  const candidates = Object.values(state.candidates || {}).filter(c => 
+    !c.archived && c.interview && c.interview.date && isToday(new Date(c.interview.date).getTime())
+  );
+  
+  // Показываем в топбаре
+  const actions = $("#topbarActions");
+  actions.innerHTML = candidates.length > 0 
+    ? `<span style="background:var(--warning-bg);padding:4px 12px;border-radius:999px;font-size:12px;color:var(--warning);">📅 Собеседований сегодня: ${candidates.length}</span>`
+    : "";
 }
 
 /* ===================== пользователи ===================== */
@@ -711,6 +1238,7 @@ function renderUsersTable() {
       <td>${escapeHtml(u.name)}</td>
       <td class="cell-secondary">${escapeHtml(u.email)}</td>
       <td>${escapeHtml(u.role)}</td>
+      <td class="cell-secondary">${escapeHtml(formatPhone(u.phone || ""))}</td>
       <td><button class="btn btn-ghost btn-edit-user" data-uid="${uid}">Изменить</button></td>
     </tr>`).join("");
   $all(".btn-edit-user").forEach((btn) => btn.addEventListener("click", (e) => { e.stopPropagation(); openEditUser(btn.dataset.uid); }));
@@ -725,6 +1253,7 @@ function openEditUser(uid) {
   $("#uName").value = u.name || "";
   $("#uEmail").value = u.email || "";
   $("#uEmail").disabled = true;
+  $("#uPhone").value = u.phone || "";
   $("#uPassword").required = false;
   $("#uPasswordField").classList.add("hidden");
   $("#uRole").value = u.role || "рекрутер";
@@ -736,9 +1265,10 @@ $("#saveUserBtn").addEventListener("click", async () => {
   const uid = $("#userUid").value;
   const name = $("#uName").value.trim();
   const role = $("#uRole").value;
+  const phone = $("#uPhone").value.trim();
 
   if (uid) {
-    await dbUpdate(`users/${uid}`, { name, role });
+    await dbUpdate(`users/${uid}`, { name, role, phone });
     toast("Пользователь обновлён");
     closeModal("#modalUser");
     return;
@@ -748,12 +1278,11 @@ $("#saveUserBtn").addEventListener("click", async () => {
   const password = $("#uPassword").value;
   if (!email || !password || password.length < 6) { toast("Пароль минимум 6 символов", "error"); return; }
 
-  // создаём юзера через вторичный инстанс firebase, чтобы не разлогинить текущего админа
   const secondaryApp = initializeApp(app.options, "secondary_" + Date.now());
   const secondaryAuth = getAuthSecondary(secondaryApp);
   try {
     const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-    await dbSet(`users/${cred.user.uid}`, { name, email, role, createdAt: nowStamp() });
+    await dbSet(`users/${cred.user.uid}`, { name, email, role, phone, createdAt: nowStamp() });
     await signOutSecondary(secondaryAuth);
     toast("Пользователь создан");
     closeModal("#modalUser");
@@ -785,9 +1314,9 @@ $("#deleteUserBtn").addEventListener("click", async () => {
 function openSettingsModal() {
   $("#settingsName").value = state.currentUser.name || "";
   $("#settingsEmail").value = state.currentUser.email || "";
+  $("#settingsPhone").value = state.currentUser.phone || "";
   $("#settingsNewPassword").value = "";
   applyTheme(state.theme);
-  renderAnalytics();
   openModal("#modalSettings");
 }
 
@@ -796,16 +1325,17 @@ $("#settingsTabs").addEventListener("click", (e) => {
   if (!btn) return;
   $all(".settings-tab").forEach((t) => t.classList.toggle("active", t === btn));
   $all(".settings-panel").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== btn.dataset.tab));
-  if (btn.dataset.tab === "analytics") renderAnalytics();
 });
 
 $all(".theme-option").forEach((btn) => btn.addEventListener("click", () => applyTheme(btn.dataset.theme)));
 
 $("#saveProfileBtn").addEventListener("click", async () => {
   const name = $("#settingsName").value.trim();
+  const phone = $("#settingsPhone").value.trim();
   const newPass = $("#settingsNewPassword").value;
-  await dbUpdate(`users/${state.currentUser.uid}`, { name });
+  await dbUpdate(`users/${state.currentUser.uid}`, { name, phone });
   state.currentUser.name = name;
+  state.currentUser.phone = phone;
   applyRoleUI();
   if (newPass) {
     if (newPass.length < 6) { toast("Пароль минимум 6 символов", "error"); return; }
@@ -819,53 +1349,6 @@ $("#saveProfileBtn").addEventListener("click", async () => {
     toast("Профиль сохранён");
   }
 });
-
-/* ---- аналитика ---- */
-
-function renderAnalytics() {
-  const candidates = Object.values(state.candidates || {});
-  const vacancies = Object.values(state.vacancies || {});
-  const activeVacancies = vacancies.filter((v) => v.status === "активна").length;
-  const hired = candidates.filter((c) => c.stage === "hired").length;
-  const archived = candidates.filter((c) => c.archived).length;
-  const todayInterviews = candidates.filter((c) => c.interview && c.interview.date && isSameDay(new Date(c.interview.date).getTime())).length;
-
-  $("#analyticsGrid").innerHTML = [
-    ["Всего кандидатов", candidates.length],
-    ["Активных вакансий", activeVacancies],
-    ["Трудоустроено", hired],
-    ["Архивных кандидатов", archived],
-    ["Собеседований сегодня", todayInterviews]
-  ].map(([lbl, num]) => `<div class="analytics-card"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`).join("");
-
-  const bySource = groupCount(candidates, (c) => (SOURCES.find((s) => s.key === c.source) || { label: "прочее" }).label);
-  const byStage = groupCount(candidates, (c) => stageLabel(c.stage));
-  const byMonth = groupCount(candidates.filter((c) => c.hiredAt), (c) => new Date(c.hiredAt).toLocaleDateString("ru-RU", { month: "short", year: "numeric" }));
-
-  $("#analyticsCharts").innerHTML = [
-    chartBlock("Кандидаты по источникам", bySource),
-    chartBlock("Кандидаты по этапам", byStage),
-    chartBlock("Трудоустройства по месяцам", byMonth)
-  ].join("");
-}
-
-function groupCount(list, keyFn) {
-  const map = {};
-  list.forEach((item) => { const k = keyFn(item) || "—"; map[k] = (map[k] || 0) + 1; });
-  return map;
-}
-
-function chartBlock(title, dataMap) {
-  const entries = Object.entries(dataMap);
-  const max = Math.max(1, ...entries.map(([, v]) => v));
-  if (!entries.length) return `<div class="chart-block"><h4>${title}</h4><span class="hint-text">нет данных</span></div>`;
-  return `<div class="chart-block"><h4>${title}</h4>${entries.map(([label, val]) => `
-    <div class="chart-bar-row">
-      <div class="chart-bar-label">${escapeHtml(label)}</div>
-      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${(val / max) * 100}%"></div></div>
-      <div class="chart-bar-value">${val}</div>
-    </div>`).join("")}</div>`;
-}
 
 /* ---- резервное копирование ---- */
 
@@ -912,7 +1395,10 @@ function renderGlobalSearchResults(term) {
   if (!term) { results.innerHTML = '<div class="search-empty">начните вводить имя, телефон или название вакансии</div>'; return; }
 
   const vac = Object.entries(state.vacancies).filter(([, v]) => (v.title || "").toLowerCase().includes(term));
-  const cand = Object.entries(state.candidates).filter(([, c]) => (c.name || "").toLowerCase().includes(term) || (c.phone || "").toLowerCase().includes(term));
+  const cand = Object.entries(state.candidates).filter(([, c]) => 
+    (c.name || "").toLowerCase().includes(term) || 
+    (c.phone || "").toLowerCase().includes(term)
+  );
 
   if (!vac.length && !cand.length) { results.innerHTML = '<div class="search-empty">ничего не найдено</div>'; return; }
 
@@ -953,6 +1439,26 @@ $all(".modal-overlay").forEach((overlay) => {
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.classList.add("hidden"); });
   $all("[data-close]", overlay).forEach((btn) => btn.addEventListener("click", () => overlay.classList.add("hidden")));
 });
+
+/* ===================== утилиты для аналитики ===================== */
+
+function groupCount(list, keyFn) {
+  const map = {};
+  list.forEach((item) => { const k = keyFn(item) || "—"; map[k] = (map[k] || 0) + 1; });
+  return map;
+}
+
+function chartBlock(title, dataMap) {
+  const entries = Object.entries(dataMap);
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  if (!entries.length) return `<div class="chart-block"><h4>${title}</h4><span class="hint-text">нет данных</span></div>`;
+  return `<div class="chart-block"><h4>${title}</h4>${entries.map(([label, val]) => `
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${escapeHtml(label)}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${(val / max) * 100}%"></div></div>
+      <div class="chart-bar-value">${val}</div>
+    </div>`).join("")}</div>`;
+}
 
 /* ===================== старт ===================== */
 
