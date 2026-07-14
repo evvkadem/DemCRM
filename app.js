@@ -1,1433 +1,1608 @@
-// ============================================================
-// app.js — вся логика интерфейса DemCRM
-// ============================================================
-
 import {
-  auth, db, loginUser, logoutUser, onAuthChange, getUserProfile,
-  updateOwnPassword, updateOwnProfile, createUserSecondary,
-  listenPath, getPath, pushPath, setPath, updatePath, removePath, pushKey
+  auth, db,
+  onAuthStateChanged, signInWithEmailAndPassword, signOut,
+  setPersistence, browserLocalPersistence, browserSessionPersistence,
+  ref, set, get, update, remove, push, onValue, serverTimestamp,
+  ensureMainAdmin, createUserAsAdmin, updatePassword,
 } from "./firebase.js";
 
-// ---------------------------------------------------------
-// КОНСТАНТЫ
-// ---------------------------------------------------------
-
-const STAGES = [
-  { key: "response", label: "Отклик" },
-  { key: "screening", label: "Скрининг" },
-  { key: "invited", label: "Приглашён на собеседование" },
-  { key: "form", label: "Анкета" },
-  { key: "interview", label: "Собеседование" },
-  { key: "selected", label: "Отобрано" },
-  { key: "director", label: "Собеседование с директором" },
-  { key: "employment", label: "Трудоустройство" },
+const MAX_DOC_SIZE = 4 * 1024 * 1024;
+const DOC_TYPES = [
+  { key: "anketa", label: "анкета" },
+  { key: "resume", label: "резюме" },
 ];
-const STALE_STAGES = ["response", "screening", "invited", "form", "interview"];
-const STALE_DAYS = 7;
-const SOURCES = ["HH.ru", "Авито", "Прочее"];
-const VACANCY_STATUSES = [
-  { key: "open", label: "Открыта" },
-  { key: "paused", label: "Приостановлена" },
-  { key: "closed", label: "Закрыта" },
-];
-const TAG_COLORS = ["#4f6dfa", "#2fb463", "#e8a53a", "#e5484d", "#a855f7", "#0ea5e9", "#f43f5e", "#64748b"];
 
-let state = {
-  user: null, profile: null,
-  vacancies: {}, managers: {}, candidates: {}, tags: {}, users: {}, activityLogs: {},
-  view: "vacancies", currentVacancyId: null,
-  theme: localStorage.getItem("demcrm_theme") || "light",
-  candidatesFilters: { search: "", vacancy: "", stage: "", source: "", tag: "" },
-  candidatesSort: { field: "createdAt", dir: "desc" },
-  analyticsPeriod: "month",
+// === ЭТАПЫ ===
+const KANBAN_STAGES = [
+  { id: "response", label: "подходящий отклик" },
+  { id: "selected", label: "отобрано" },
+  { id: "invited", label: "приглашён" },
+  { id: "form", label: "анкета" },
+  { id: "interview", label: "собеседование" },
+  { id: "selected2", label: "отобрано" },
+  { id: "director_interview", label: "собеседование с директором" },
+  { id: "hired", label: "трудоустройство" },
+];
+
+// === СОСТОЯНИЕ ===
+const state = {
+  currentUser: null,
+  vacancies: {},
+  candidates: {},
+  users: {},
+  activeSection: "vacancies",
+  activeVacancyId: null,
+  analyticsPeriod: "week",
+  selectedTags: [],
 };
 
-// ---------------------------------------------------------
-// УТИЛИТЫ
-// ---------------------------------------------------------
-
-function $(sel, root = document) { return root.querySelector(sel); }
-function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "html") node.innerHTML = v;
-    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null) node.setAttribute(k, v);
-  }
-  for (const c of [].concat(children)) {
-    if (c === null || c === undefined) continue;
-    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
-  }
-  return node;
+// === УТИЛИТЫ ===
+function showToast(message, type = "default") {
+  const root = document.getElementById("toast-root");
+  const el = document.createElement("div");
+  el.className = `toast${type === "error" ? " toast-error" : ""}`;
+  el.textContent = message;
+  root.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
 }
-function fmtDate(ts) {
-  if (!ts) return "—";
-  const d = new Date(ts);
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[m]));
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  const d = typeof value === "number" ? new Date(value) : new Date(value);
+  if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
-function fmtDateTime(ts) {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  return d.toLocaleDateString("ru-RU") + " " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-}
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function daysBetween(ts1, ts2) {
-  return Math.floor((ts2 - ts1) / (1000 * 60 * 60 * 24));
-}
-function colorFromString(str) {
-  let hash = 0;
-  for (let i = 0; i < (str || "").length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 55%, 50%)`;
-}
-function initials(name) {
-  if (!name) return "?";
-  return name.split(" ").filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
-}
-function debounce(fn, ms) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-}
-function maskPhone(value) {
-  let digits = value.replace(/\D/g, "");
-  if (digits.startsWith("8")) digits = "7" + digits.slice(1);
-  if (!digits.startsWith("7")) digits = "7" + digits;
-  digits = digits.slice(0, 11);
-  let out = "7";
-  if (digits.length > 1) out += " " + digits.slice(1, 4);
-  if (digits.length > 4) out += " " + digits.slice(4, 7);
-  if (digits.length > 7) out += "-" + digits.slice(7, 9);
-  if (digits.length > 9) out += "-" + digits.slice(9, 11);
-  return out;
-}
-function isValidPhone(v) {
-  return /^7 \d{3} \d{3}-\d{2}-\d{2}$/.test(v);
-}
-function isValidEmail(v) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-}
-function escapeHtml(s) {
-  return (s || "").toString().replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+function formatPhone(phone) {
+  const cleaned = String(phone || "").replace(/\D/g, "");
+  if (cleaned.length === 11 && cleaned.startsWith("7")) {
+    return `7 ${cleaned.slice(1, 4)} ${cleaned.slice(4, 7)}-${cleaned.slice(7, 9)}-${cleaned.slice(9, 11)}`;
+  }
+  return phone || "";
 }
 
-// ---------------------------------------------------------
-// TOASTS
-// ---------------------------------------------------------
-function toast(message, type = "info") {
-  const root = $("#toastRoot");
-  const node = el("div", { class: `toast toast-${type}` }, message);
-  root.appendChild(node);
-  setTimeout(() => { node.style.opacity = "0"; node.style.transition = "opacity 200ms"; setTimeout(() => node.remove(), 200); }, 3500);
+function formatDateInput(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
 }
 
-// ---------------------------------------------------------
-// ПОДТВЕРЖДЕНИЕ ДЕЙСТВИЯ (общий модал)
-// ---------------------------------------------------------
-function confirmModal({ title, message, confirmLabel = "Продолжить", danger = false }) {
+function isToday(dateStr) {
+  if (!dateStr) return false;
+  return dateStr === new Date().toISOString().slice(0, 10);
+}
+
+function daysBetween(date1, date2) {
+  const d1 = new Date(date1);
+  const d2 = new Date(date2);
+  return Math.floor((d2 - d1) / (1000 * 60 * 60 * 24));
+}
+
+function confirmDialog(message) {
   return new Promise((resolve) => {
-    const overlay = el("div", { class: "modal-overlay" });
-    const modal = el("div", { class: "modal" }, [
-      el("div", { class: "modal-head" }, [el("h3", {}, title)]),
-      el("div", { class: "modal-body" }, [el("div", {}, message)]),
-      el("div", { class: "modal-footer" }, [
-        el("button", { class: "btn btn-secondary", onclick: () => { close(false); } }, "Отмена"),
-        el("button", { class: danger ? "btn btn-danger" : "btn btn-primary", onclick: () => { close(true); } }, confirmLabel),
-      ]),
-    ]);
-    overlay.appendChild(modal);
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(false); });
-    function onKey(e) { if (e.key === "Escape") close(false); }
-    document.addEventListener("keydown", onKey);
-    function close(result) {
-      document.removeEventListener("keydown", onKey);
-      overlay.remove();
-      resolve(result);
-    }
-    document.body.appendChild(overlay);
+    openModal({
+      title: "подтверждение",
+      bodyHtml: `<p style="margin:0;color:var(--text-secondary);font-size:14px;">${message}</p>`,
+      footerHtml: `
+        <button class="btn btn-secondary" id="confirm-cancel">отмена</button>
+        <button class="btn btn-danger" id="confirm-ok">продолжить</button>
+      `,
+      onMount: (overlay, close) => {
+        overlay.querySelector("#confirm-cancel").addEventListener("click", () => { close(); resolve(false); });
+        overlay.querySelector("#confirm-ok").addEventListener("click", () => { close(); resolve(true); });
+      },
+    });
   });
 }
 
-function openModal(contentNode, { wide = false } = {}) {
-  const overlay = el("div", { class: "modal-overlay" });
-  const modal = el("div", { class: wide ? "modal modal-wide" : "modal" });
-  modal.appendChild(contentNode);
-  overlay.appendChild(modal);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(overlay); });
-  function onKey(e) { if (e.key === "Escape") closeModal(overlay); }
-  document.addEventListener("keydown", onKey);
-  overlay._onKey = onKey;
-  document.body.appendChild(overlay);
-  return overlay;
-}
-function closeModal(overlay) {
-  if (!overlay) return;
-  document.removeEventListener("keydown", overlay._onKey);
-  overlay.remove();
+// === МОДАЛКИ ===
+function openModal({ title, bodyHtml, wide = false, onMount, footerHtml }) {
+  const root = document.getElementById("modal-root");
+  root.innerHTML = "";
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal ${wide ? "modal-wide" : ""}">
+      <div class="modal-header">
+        <h2>${title}</h2>
+        <button class="modal-close" aria-label="закрыть">✕</button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+      ${footerHtml ? `<div class="modal-footer">${footerHtml}</div>` : ""}
+    </div>
+  `;
+  root.appendChild(overlay);
+
+  const close = () => { root.innerHTML = ""; };
+  overlay.querySelector(".modal-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", function escHandler(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", escHandler); }
+  });
+
+  if (onMount) onMount(overlay, close);
+  return close;
 }
 
-// ---------------------------------------------------------
-// КАСТОМНЫЙ DROPDOWN
-// ---------------------------------------------------------
-function buildDropdown({ options, value, placeholder = "Выбрать…", onChange, searchable = true, allowEmpty = true }) {
-  const wrap = el("div", { class: "dd" });
-  const trigger = el("div", { class: "dd-trigger", tabindex: "0" });
-  wrap.appendChild(trigger);
-  let currentValue = value;
+// === КАСТОМНЫЙ SELECT (раскрывающийся список) ===
+function createCustomSelect(container, options, selectedValue, onChange) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "custom-select";
 
-  function labelFor(v) {
-    const opt = options.find(o => o.value === v);
-    return opt ? opt.label : "";
-  }
-  function renderTrigger() {
-    trigger.innerHTML = "";
-    const lbl = labelFor(currentValue);
-    trigger.appendChild(el("span", { class: lbl ? "dd-value" : "dd-placeholder" }, lbl || placeholder));
-    trigger.appendChild(el("span", { class: "text-secondary", html: "▾" }));
-  }
-  renderTrigger();
+  const trigger = document.createElement("div");
+  trigger.className = "custom-select-trigger";
+  const selectedLabel = options.find(o => o.value === selectedValue)?.label || "выберите";
+  trigger.innerHTML = `<span>${selectedLabel}</span><span class="custom-select-arrow">▾</span>`;
+  wrapper.appendChild(trigger);
+
+  const dropdown = document.createElement("div");
+  dropdown.className = "custom-select-dropdown";
+  options.forEach(opt => {
+    const item = document.createElement("div");
+    item.className = `custom-select-item${opt.value === selectedValue ? " active" : ""}`;
+    item.textContent = opt.label;
+    item.dataset.value = opt.value;
+    item.addEventListener("click", () => {
+      const label = options.find(o => o.value === opt.value)?.label || opt.value;
+      trigger.querySelector("span:first-child").textContent = label;
+      dropdown.querySelectorAll(".custom-select-item").forEach(el => el.classList.remove("active"));
+      item.classList.add("active");
+      wrapper.querySelector(".custom-select-dropdown").classList.remove("open");
+      if (onChange) onChange(opt.value);
+    });
+    dropdown.appendChild(item);
+  });
+  wrapper.appendChild(dropdown);
 
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    openPopover();
+    const isOpen = dropdown.classList.toggle("open");
+    document.querySelectorAll(".custom-select-dropdown.open").forEach(el => {
+      if (el !== dropdown) el.classList.remove("open");
+    });
   });
 
-  function openPopover() {
-    closeAllPopovers();
-    const rect = trigger.getBoundingClientRect();
-    const pop = el("div", { class: "dd-popover" });
-    pop.style.left = rect.left + "px";
-    pop.style.top = (rect.bottom + 6) + "px";
-    pop.style.width = Math.max(rect.width, 200) + "px";
-    let searchInput;
-    if (searchable) {
-      searchInput = el("input", { class: "dd-search", placeholder: "Поиск…" });
-      pop.appendChild(searchInput);
-    }
-    const list = el("div", { class: "dd-list" });
-    pop.appendChild(list);
+  document.addEventListener("click", () => {
+    dropdown.classList.remove("open");
+  });
 
-    function renderList(filter = "") {
-      list.innerHTML = "";
-      const filtered = options.filter(o => o.label.toLowerCase().includes(filter.toLowerCase()));
-      if (allowEmpty) {
-        const emptyOpt = el("div", { class: "dd-option" }, "— не выбрано —");
-        emptyOpt.addEventListener("click", () => { select(""); });
-        list.appendChild(emptyOpt);
+  container.appendChild(wrapper);
+
+  return {
+    setValue: (val) => {
+      const opt = options.find(o => o.value === val);
+      if (opt) {
+        trigger.querySelector("span:first-child").textContent = opt.label;
+        dropdown.querySelectorAll(".custom-select-item").forEach(el => {
+          el.classList.toggle("active", el.dataset.value === val);
+        });
+        if (onChange) onChange(val);
       }
-      if (filtered.length === 0) {
-        list.appendChild(el("div", { class: "dd-option text-secondary" }, "Ничего не найдено"));
-      }
-      filtered.forEach(o => {
-        const optNode = el("div", { class: "dd-option" + (o.value === currentValue ? " selected" : "") }, o.label);
-        optNode.addEventListener("click", () => select(o.value));
-        list.appendChild(optNode);
-      });
+    },
+    getValue: () => {
+      const active = dropdown.querySelector(".custom-select-item.active");
+      return active ? active.dataset.value : null;
     }
-    function select(v) {
-      currentValue = v;
-      renderTrigger();
-      onChange && onChange(v);
-      document.body.removeChild(pop);
-    }
-    renderList();
-    if (searchInput) {
-      searchInput.addEventListener("input", () => renderList(searchInput.value));
-      setTimeout(() => searchInput.focus(), 10);
-    }
-    document.body.appendChild(pop);
-    setTimeout(() => {
-      document.addEventListener("click", outsideClick);
-    }, 0);
-    function outsideClick(e) {
-      if (!pop.contains(e.target)) {
-        pop.remove();
-        document.removeEventListener("click", outsideClick);
-      }
-    }
-    pop._cleanup = () => { pop.remove(); document.removeEventListener("click", outsideClick); };
-    activePopovers.push(pop);
-  }
-  wrap.setValue = (v) => { currentValue = v; renderTrigger(); };
-  wrap.getValue = () => currentValue;
-  return wrap;
-}
-let activePopovers = [];
-function closeAllPopovers() {
-  activePopovers.forEach(p => p._cleanup && p._cleanup());
-  activePopovers = [];
+  };
 }
 
-// ---------------------------------------------------------
-// АВТОРИЗАЦИЯ
-// ---------------------------------------------------------
+// === АВТОРИЗАЦИЯ ===
+const loginForm = document.getElementById("login-form");
+const loginScreen = document.getElementById("login-screen");
+const appRoot = document.getElementById("app");
 
-$("#loginForm").addEventListener("submit", async (e) => {
+loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = $("#loginEmail").value.trim();
-  const password = $("#loginPassword").value;
-  const remember = $("#loginRemember").checked;
-  const errBox = $("#loginError");
-  errBox.textContent = "";
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+  const remember = document.getElementById("login-remember").checked;
+  const errorBox = document.getElementById("login-error");
+  errorBox.hidden = true;
+
   try {
-    await loginUser(email, password, remember);
+    await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+    await signInWithEmailAndPassword(auth, email, password);
   } catch (err) {
-    errBox.textContent = "Неверный email или пароль.";
+    errorBox.textContent = "неверный email или пароль";
+    errorBox.hidden = false;
   }
 });
 
-$("#openSettings").addEventListener("click", openSettingsModal);
-
-document.querySelectorAll(".nav-item[data-view]").forEach(btn => {
-  btn.addEventListener("click", () => switchView(btn.dataset.view));
-});
-
-onAuthChange(async (user) => {
-  if (user) {
-    state.user = user;
-    state.profile = await getUserProfile(user.uid);
-    if (!state.profile) {
-      // на случай отсутствия профиля — считаем рекрутером
-      state.profile = { name: user.email, email: user.email, role: "recruiter" };
-    }
-    $("#loginScreen").classList.add("hidden");
-    $("#app").classList.remove("hidden");
-    document.documentElement.setAttribute("data-theme", state.theme);
-    if (state.profile.role !== "admin") $("#navUsers").classList.add("hidden");
-    initListeners();
-    switchView("vacancies");
-  } else {
-    state.user = null;
-    $("#loginScreen").classList.remove("hidden");
-    $("#app").classList.add("hidden");
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    loginScreen.hidden = false;
+    appRoot.hidden = true;
+    return;
   }
+
+  const snap = await get(ref(db, `users/${user.uid}`));
+  const profile = snap.val();
+  if (!profile) {
+    showToast("профиль не найден, обратитесь к администратору", "error");
+    await signOut(auth);
+    return;
+  }
+
+  state.currentUser = { uid: user.uid, ...profile };
+  loginScreen.hidden = true;
+  appRoot.hidden = false;
+
+  document.getElementById("user-name").textContent = profile.name || profile.email;
+  document.getElementById("user-avatar").textContent = (profile.name || profile.email || "?").charAt(0).toUpperCase();
+
+  document.querySelectorAll("[data-admin-only]").forEach((el) => {
+    el.style.display = profile.role === "admin" ? "flex" : "none";
+  });
+
+  initDataListeners();
 });
 
-// ---------------------------------------------------------
-// REALTIME LISTENERS
-// ---------------------------------------------------------
+// === НАВИГАЦИЯ ===
+document.querySelectorAll(".nav-item[data-section]").forEach((btn) => {
+  btn.addEventListener("click", () => switchSection(btn.dataset.section));
+});
+
+document.getElementById("kanban-back").addEventListener("click", () => switchSection("vacancies"));
+
+function switchSection(section) {
+  state.activeSection = section;
+  document.querySelectorAll(".nav-item[data-section]").forEach((b) => b.classList.toggle("active", b.dataset.section === section));
+  document.querySelectorAll(".section").forEach((s) => s.classList.remove("active"));
+  const target = document.getElementById(`section-${section}`);
+  if (target) target.classList.add("active");
+  if (section === "analytics") renderAnalytics();
+}
+
+// === ДАННЫЕ ===
 let listenersInitialized = false;
-function initListeners() {
+
+function initDataListeners() {
   if (listenersInitialized) return;
   listenersInitialized = true;
-  listenPath("vacancies", (data) => { state.vacancies = data; renderCurrentView(); });
-  listenPath("managers", (data) => { state.managers = data; renderCurrentView(); });
-  listenPath("candidates", (data) => { state.candidates = data; runStaleCheck(); renderCurrentView(); });
-  listenPath("tags", (data) => { state.tags = data; renderCurrentView(); });
-  listenPath("users", (data) => { state.users = data; if (state.view === "users") renderCurrentView(); });
-  setInterval(runStaleCheck, 60000);
+
+  onValue(ref(db, "vacancies"), (snap) => {
+    state.vacancies = snap.val() || {};
+    renderVacancies();
+    renderCandidateFilters();
+    renderTodayInterviews();
+  });
+
+  onValue(ref(db, "candidates"), (snap) => {
+    state.candidates = snap.val() || {};
+    renderVacancies();
+    renderCandidatesTable();
+    renderTodayInterviews();
+    if (state.activeVacancyId) renderKanban();
+    checkAutoArchive();
+  });
+
+  onValue(ref(db, "users"), (snap) => {
+    state.users = snap.val() || {};
+    renderUsersTable();
+    renderManagerSelects();
+  });
 }
 
-// ---------------------------------------------------------
-// РОУТИНГ / ОБЩИЙ РЕНДЕР
-// ---------------------------------------------------------
-function switchView(view, opts = {}) {
-  state.view = view;
-  if (opts.vacancyId !== undefined) state.currentVacancyId = opts.vacancyId;
-  $all(".nav-item[data-view]").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
-  renderCurrentView();
-}
+// === АВТОАРХИВ ===
+function checkAutoArchive() {
+  const now = Date.now();
+  const TWO_WEEKS = 14 * 24 * 60 * 60 * 1000;
+  const archiveStages = ["response", "selected", "invited"];
 
-function renderCurrentView() {
-  if (!state.user) return;
-  const topbar = $("#topbar");
-  const workspace = $("#workspace");
-  topbar.innerHTML = "";
-  workspace.innerHTML = "";
+  Object.entries(state.candidates).forEach(([id, c]) => {
+    if (c.archived) return;
+    if (!archiveStages.includes(c.stage)) return;
+    if (!c.createdAt) return;
 
-  if (state.view === "vacancies") {
-    if (state.currentVacancyId) renderKanbanView(topbar, workspace);
-    else renderVacanciesView(topbar, workspace);
-  } else if (state.view === "candidates") {
-    renderCandidatesView(topbar, workspace);
-  } else if (state.view === "analytics") {
-    renderAnalyticsView(topbar, workspace);
-  } else if (state.view === "users") {
-    renderUsersView(topbar, workspace);
-  }
-}
-
-// ---------------------------------------------------------
-// ВАКАНСИИ
-// ---------------------------------------------------------
-function renderVacanciesView(topbar, workspace) {
-  topbar.appendChild(el("div", { class: "topbar-title" }, "Вакансии"));
-  const search = el("input", { placeholder: "Поиск по вакансиям…" });
-  const searchWrap = el("div", { class: "topbar-search" }, [
-    el("div", { html: searchIconSvg() }), search
-  ]);
-  topbar.appendChild(searchWrap);
-  topbar.appendChild(el("div", { class: "topbar-spacer" }));
-  topbar.appendChild(el("button", { class: "btn btn-primary", onclick: () => openVacancyModal(null) }, "+ Добавить вакансию"));
-
-  // сегодняшние собеседования
-  const todayList = Object.entries(state.candidates || {})
-    .filter(([id, c]) => c.interviewDate === todayStr() && !c.archived);
-  const todayBlock = el("div", { class: "card today-interviews" });
-  todayBlock.appendChild(el("h4", { style: "margin:0 0 10px;font-size:13px;color:var(--text-secondary);" }, "Собеседования сегодня"));
-  if (todayList.length === 0) {
-    todayBlock.appendChild(el("div", { class: "text-secondary" }, "Собеседований сегодня нет."));
-  } else {
-    todayList.forEach(([id, c]) => {
-      const vac = state.vacancies?.[c.vacancyId];
-      todayBlock.appendChild(el("div", { class: "today-interview-item" }, [
-        el("span", {}, c.fio),
-        el("span", { class: "text-secondary" }, vac ? vac.title : "—"),
-        el("span", {}, c.interviewTime || "—"),
-      ]));
-    });
-  }
-  workspace.appendChild(todayBlock);
-  workspace.appendChild(el("div", { style: "height:16px" }));
-
-  const list = Object.entries(state.vacancies || {});
-  const filtered = list.filter(([id, v]) => (v.title || "").toLowerCase().includes(search.value.toLowerCase()));
-  const grid = el("div", { class: "grid grid-vacancies" });
-
-  function draw() {
-    grid.innerHTML = "";
-    const q = search.value.toLowerCase();
-    const items = Object.entries(state.vacancies || {}).filter(([id, v]) => (v.title || "").toLowerCase().includes(q));
-    if (items.length === 0) {
-      grid.appendChild(emptyState("Нет активных вакансий."));
-      return;
+    const age = now - c.createdAt;
+    if (age > TWO_WEEKS) {
+      update(ref(db, `candidates/${id}`), {
+        archived: true,
+        archivedAt: now,
+        archiveReason: "не вышел на связь",
+      });
     }
-    items.forEach(([id, v]) => grid.appendChild(vacancyCard(id, v)));
-  }
-  search.addEventListener("input", draw);
-  draw();
-  workspace.appendChild(grid);
+  });
 }
 
-function vacancyCard(id, v) {
-  const cands = Object.entries(state.candidates || {}).filter(([cid, c]) => c.vacancyId === id && !c.archived);
-  const employed = cands.filter(([cid, c]) => c.stage === "employment").length;
-  const total = cands.length;
-  const progress = v.openSlots ? Math.min(100, Math.round((employed / v.openSlots) * 100)) : 0;
-  const manager = state.managers?.[v.managerId];
-  const statusInfo = VACANCY_STATUSES.find(s => s.key === v.status) || VACANCY_STATUSES[0];
-  const badgeClass = v.status === "closed" ? "badge-closed" : v.status === "paused" ? "badge-paused" : "badge-open";
+// === СОБЕСЕДОВАНИЯ НА СЕГОДНЯ ===
+function renderTodayInterviews() {
+  const container = document.getElementById("today-interviews");
+  if (!container) return;
 
-  const card = el("div", { class: "card vacancy-card", onclick: () => switchView("vacancies", { vacancyId: id }) }, [
-    el("div", { class: "vacancy-card-head" }, [
-      el("div", {}, [
-        el("div", { class: "vacancy-card-title" }, v.title || "Без названия"),
-        el("div", { class: "vacancy-card-manager" }, manager ? `${manager.fio} · ${manager.phone || ""}` : "Руководитель не указан"),
-      ]),
-      el("span", { class: `badge ${badgeClass}` }, statusInfo.label),
-    ]),
-    el("div", { class: "progress-bar" }, [el("div", { class: "progress-bar-fill", style: `width:${progress}%` })]),
-    el("div", { class: "vacancy-stats" }, [
-      el("span", {}, [el("b", {}, String(v.openSlots || 0)), " мест"]),
-      el("span", {}, [el("b", {}, String(total)), " кандидатов"]),
-      el("span", {}, [el("b", {}, String(employed)), " трудоустроено"]),
-    ]),
-    el("div", { class: "text-secondary", style: "font-size:11px" }, `Открыта: ${fmtDate(v.createdAt)}`),
-  ]);
-  return card;
-}
-
-function emptyState(text) {
-  return el("div", { class: "empty-state" }, [
-    el("div", { html: "🗂️", style: "font-size:32px" }),
-    el("div", {}, text),
-  ]);
-}
-function searchIconSvg() {
-  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
-}
-
-function openVacancyModal(vacancyId) {
-  const isEdit = !!vacancyId;
-  const v = isEdit ? state.vacancies[vacancyId] : { title: "", managerId: "", description: "", openSlots: 1, status: "open", comment: "" };
-
-  const titleInput = el("input", { value: v.title || "" });
-  const descInput = el("textarea", { placeholder: "Описание вакансии" }, v.description || "");
-  descInput.value = v.description || "";
-  const slotsInput = el("input", { type: "number", min: "1", value: v.openSlots || 1 });
-  const commentInput = el("textarea", {}, v.comment || "");
-  commentInput.value = v.comment || "";
-
-  const statusDD = buildDropdown({
-    options: VACANCY_STATUSES.map(s => ({ value: s.key, label: s.label })),
-    value: v.status || "open", allowEmpty: false, searchable: false,
-    onChange: () => {}
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCandidates = Object.entries(state.candidates).filter(([, c]) => {
+    return c.interviewDate === today && !c.archived;
   });
 
-  const managerFieldWrap = el("div", { class: "field" }, [el("label", {}, "Руководитель отдела")]);
-  let selectedManagerId = v.managerId || "";
-  function managerOptions() {
-    return Object.entries(state.managers || {}).map(([id, m]) => ({ value: id, label: `${m.fio} · ${m.phone || ""}` }));
+  if (todayCandidates.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:20px 0;">сегодня собеседований нет</div>`;
+    return;
   }
-  const managerDD = buildDropdown({
-    options: managerOptions(), value: selectedManagerId, placeholder: "Выбрать руководителя",
-    onChange: (v2) => { selectedManagerId = v2; }
+
+  container.innerHTML = todayCandidates.map(([id, c]) => {
+    const vacancy = state.vacancies[c.vacancyId];
+    return `
+      <div class="today-interview-item" data-id="${id}">
+        <span class="today-interview-name">${escapeHtml(c.name)}</span>
+        <span class="today-interview-vacancy">${escapeHtml(vacancy?.title || "—")}</span>
+        <span class="today-interview-time">${escapeHtml(c.interviewTime || "")}</span>
+        <button class="btn btn-sm btn-ghost" data-action="mark-no-show" data-id="${id}">не пришёл</button>
+      </div>
+    `;
+  }).join("");
+
+  container.querySelectorAll('[data-action="mark-no-show"]').forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      await markNoShow(id);
+    });
   });
-  const addManagerBtn = el("button", { class: "btn btn-secondary", type: "button", onclick: () => openManagerModal((newId) => {
-    managerDD.wrap = managerDD;
-    const opts = managerOptions();
-    // пересоздаём dropdown с обновлённым списком
-    const newDD = buildDropdown({ options: opts, value: newId, placeholder: "Выбрать руководителя", onChange: (v3) => { selectedManagerId = v3; } });
-    managerFieldWrap.replaceChild(newDD, managerFieldWrap.lastChild);
-    selectedManagerId = newId;
-  }) }, "+ Новый руководитель");
-  managerFieldWrap.appendChild(managerDD);
 
-  const body = el("div", { class: "modal-body" }, [
-    el("div", { class: "field" }, [el("label", {}, "Название вакансии"), titleInput]),
-    el("div", { class: "form-row" }, [
-      managerFieldWrap,
-      el("div", { class: "field" }, [el("label", {}, " "), addManagerBtn]),
-    ]),
-    el("div", { class: "field" }, [el("label", {}, "Описание"), descInput]),
-    el("div", { class: "form-row" }, [
-      el("div", { class: "field" }, [el("label", {}, "Открытых мест"), slotsInput]),
-      el("div", { class: "field" }, [el("label", {}, "Статус"), statusDD]),
-    ]),
-    el("div", { class: "field" }, [el("label", {}, "Комментарий"), commentInput]),
-  ]);
+  container.querySelectorAll('.today-interview-item').forEach(item => {
+    item.addEventListener("click", () => {
+      const id = item.dataset.id;
+      if (id) openCandidateModal(id);
+    });
+  });
+}
 
-  const footer = el("div", { class: "modal-footer" });
-  if (isEdit) {
-    footer.appendChild(el("button", { class: "btn btn-danger", onclick: async () => {
-      const ok = await confirmModal({ title: "Удалить вакансию?", message: "Это действие необратимо. Кандидаты останутся в базе.", confirmLabel: "Удалить", danger: true });
-      if (ok) { await removePath(`vacancies/${vacancyId}`); toast("Вакансия удалена", "success"); closeModal(overlay); }
-    } }, "Удалить"));
+// === ПОМЕТКА "НЕ ПРИШЁЛ" ===
+async function markNoShow(candidateId) {
+  const c = state.candidates[candidateId];
+  if (!c) return;
+
+  const noShows = c.noShowCount || 0;
+  const newCount = noShows + 1;
+
+  const updates = { noShowCount: newCount };
+
+  if (newCount >= 3) {
+    const tags = c.tags || [];
+    if (!tags.includes("черный список")) {
+      tags.push("черный список");
+      updates.tags = tags;
+      showToast("кандидат добавлен в чёрный список", "error");
+    }
   }
-  const spacer = el("div", { class: "topbar-spacer" });
-  footer.appendChild(spacer);
-  footer.appendChild(el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Отмена"));
-  footer.appendChild(el("button", { class: "btn btn-primary", onclick: async () => {
-    if (!titleInput.value.trim()) { toast("Укажите название вакансии", "error"); return; }
-    const payload = {
-      title: titleInput.value.trim(),
-      managerId: selectedManagerId || "",
-      description: descInput.value,
-      openSlots: Number(slotsInput.value) || 1,
-      status: statusDD.getValue(),
-      comment: commentInput.value,
-      createdAt: v.createdAt || Date.now(),
-    };
-    if (isEdit) await updatePath(`vacancies/${vacancyId}`, payload);
-    else await pushPath("vacancies", payload);
-    toast("Вакансия сохранена", "success");
-    closeModal(overlay);
-  } }, "Сохранить"));
 
-  const content = el("div", {}, [
-    el("div", { class: "modal-head" }, [el("h3", {}, isEdit ? "Редактирование вакансии" : "Новая вакансия"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    body, footer,
-  ]);
-  const overlay = openModal(content);
+  await update(ref(db, `candidates/${candidateId}`), updates);
+  await push(ref(db, `candidates/${candidateId}/history`), {
+    action: `отметка "не пришёл на собеседование" (${newCount}/3)`,
+    userName: state.currentUser.name || state.currentUser.email,
+    at: serverTimestamp(),
+  });
+  showToast(`отмечено (${newCount}/3)`);
 }
 
-function openManagerModal(onCreated) {
-  const fioInput = el("input", { placeholder: "ФИО" });
-  const phoneInput = el("input", { placeholder: "7 999 999-99-99" });
-  phoneInput.addEventListener("input", () => { phoneInput.value = maskPhone(phoneInput.value); });
-  phoneInput.value = "7 ";
+// === ВАКАНСИИ ===
+const vacancyGrid = document.getElementById("vacancies-grid");
+const vacancyEmpty = document.getElementById("vacancies-empty");
+const vacancySearch = document.getElementById("vacancy-search");
+const vacancyFilter = document.getElementById("vacancy-filter");
 
-  const content = el("div", {}, [
-    el("div", { class: "modal-head" }, [el("h3", {}, "Новый руководитель"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    el("div", { class: "modal-body" }, [
-      el("div", { class: "field" }, [el("label", {}, "ФИО"), fioInput]),
-      el("div", { class: "field" }, [el("label", {}, "Телефон"), phoneInput]),
-    ]),
-    el("div", { class: "modal-footer" }, [
-      el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Отмена"),
-      el("button", { class: "btn btn-primary", onclick: async () => {
-        if (!fioInput.value.trim()) { toast("Укажите ФИО", "error"); return; }
-        if (!isValidPhone(phoneInput.value)) { toast("Некорректный номер телефона", "error"); return; }
-        const newId = await pushPath("managers", { fio: fioInput.value.trim(), phone: phoneInput.value });
-        toast("Руководитель добавлен", "success");
-        closeModal(overlay);
-        onCreated && onCreated(newId);
-      } }, "Сохранить"),
-    ]),
-  ]);
-  const overlay = openModal(content);
+vacancySearch.addEventListener("input", renderVacancies);
+vacancyFilter.addEventListener("change", renderVacancies);
+
+const STATUS_LABELS = { active: "активна", paused: "приостановлена", closed: "закрыта" };
+
+function vacancyMetrics(vacancyId) {
+  const candidatesForVacancy = Object.entries(state.candidates).filter(([, c]) => c.vacancyId === vacancyId);
+  const total = candidatesForVacancy.length;
+  const hired = candidatesForVacancy.filter(([, c]) => c.stage === "hired").length;
+  return { total, hired };
 }
 
-// ---------------------------------------------------------
-// KANBAN
-// ---------------------------------------------------------
-function renderKanbanView(topbar, workspace) {
-  const vId = state.currentVacancyId;
-  const v = state.vacancies?.[vId];
-  if (!v) { state.currentVacancyId = null; renderVacanciesView(topbar, workspace); return; }
+function renderVacancies() {
+  const searchTerm = vacancySearch.value.trim().toLowerCase();
+  const filterStatus = vacancyFilter.value;
 
-  topbar.appendChild(el("button", { class: "btn-icon", onclick: () => switchView("vacancies", { vacancyId: null }) }, "←"));
-  topbar.appendChild(el("div", { class: "topbar-title" }, v.title));
-  topbar.appendChild(el("div", { class: "topbar-spacer" }));
-  topbar.appendChild(el("button", { class: "btn btn-secondary", onclick: () => openVacancyModal(vId) }, "Изменить вакансию"));
-  topbar.appendChild(el("button", { class: "btn btn-primary", onclick: () => openCandidateModal(null, { vacancyId: vId, stage: "response" }) }, "+ Добавить кандидата"));
+  const entries = Object.entries(state.vacancies).filter(([, v]) => {
+    const matchesSearch = !searchTerm || (v.title || "").toLowerCase().includes(searchTerm);
+    const matchesStatus = filterStatus === "all" || v.status === filterStatus;
+    return matchesSearch && matchesStatus;
+  });
 
-  const board = el("div", { class: "kanban-board" });
-  STAGES.forEach(stage => {
-    const candidates = Object.entries(state.candidates || {})
-      .filter(([id, c]) => c.vacancyId === vId && !c.archived && c.onKanban !== false && c.stage === stage.key);
+  vacancyGrid.innerHTML = "";
+  vacancyEmpty.hidden = entries.length > 0;
 
-    const cardsWrap = el("div", { class: "kanban-cards" });
-    cardsWrap.dataset.stage = stage.key;
-    candidates.forEach(([id, c]) => cardsWrap.appendChild(candidateCard(id, c)));
+  entries.forEach(([id, v]) => {
+    const { total, hired } = vacancyMetrics(id);
+    const positions = Number(v.positions) || 0;
+    const progressPct = positions > 0 ? Math.min(100, Math.round((hired / positions) * 100)) : 0;
 
-    const column = el("div", { class: "kanban-column" }, [
-      el("div", { class: "kanban-column-head" }, [el("span", {}, stage.label), el("span", { class: "count" }, String(candidates.length))]),
-      cardsWrap,
-    ]);
+    const manager = state.users[v.managerId];
+    const managerName = manager?.name || v.manager || "—";
+    const managerPhone = manager?.phone ? formatPhone(manager.phone) : "";
 
-    column.addEventListener("dragover", (e) => { e.preventDefault(); column.classList.add("drag-over"); });
-    column.addEventListener("dragleave", () => column.classList.remove("drag-over"));
-    column.addEventListener("drop", async (e) => {
+    const card = document.createElement("div");
+    card.className = "vacancy-card";
+    card.innerHTML = `
+      <div class="vacancy-card-title">${escapeHtml(v.title || "без названия")}</div>
+      <div class="vacancy-card-manager">${escapeHtml(managerName)} ${managerPhone ? `· ${managerPhone}` : ""}</div>
+      <div class="vacancy-card-metrics">
+        <span>кандидаты: <b>${total}</b></span>
+        <span>места: <b>${positions}</b></span>
+        <span>трудоустроено: <b>${hired}</b></span>
+      </div>
+      <div>
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:${progressPct}%"></div></div>
+        <div class="progress-label">закрыто ${hired} из ${positions} мест</div>
+      </div>
+      <div class="vacancy-card-footer">
+        <span class="status-pill status-${v.status || "active"}">${STATUS_LABELS[v.status] || "активна"}</span>
+        <span class="progress-label">${v.openedAt ? formatDate(v.openedAt) : ""}</span>
+      </div>
+    `;
+    card.addEventListener("click", () => openKanban(id));
+    vacancyGrid.appendChild(card);
+  });
+}
+
+function openKanban(vacancyId) {
+  state.activeVacancyId = vacancyId;
+  const v = state.vacancies[vacancyId];
+  document.getElementById("kanban-title").textContent = v ? v.title : "—";
+  switchSection("kanban");
+  renderKanban();
+}
+
+// === РУКОВОДИТЕЛИ (select) ===
+function renderManagerSelects() {
+  const managerOptions = Object.entries(state.users).map(([id, u]) => ({
+    value: id,
+    label: `${u.name || u.email} ${u.phone ? `(${formatPhone(u.phone)})` : ""}`
+  }));
+
+  // Обновляем существующие custom select'ы
+  document.querySelectorAll('.manager-select-container').forEach(container => {
+    const currentValue = container.dataset.value || "";
+    container.innerHTML = "";
+    const select = createCustomSelect(container, managerOptions, currentValue, (val) => {
+      container.dataset.value = val;
+    });
+  });
+}
+
+// === СОЗДАНИЕ ВАКАНСИИ ===
+document.getElementById("add-vacancy-btn").addEventListener("click", () => {
+  const managerOptions = Object.entries(state.users).map(([id, u]) => ({
+    value: id,
+    label: `${u.name || u.email} ${u.phone ? `(${formatPhone(u.phone)})` : ""}`
+  }));
+
+  openModal({
+    title: "новая вакансия",
+    bodyHtml: `
+      <label class="field"><span class="field-label">название</span><input class="field-input" id="v-title" /></label>
+      <label class="field"><span class="field-label">руководитель</span><div class="manager-select-container" id="v-manager-container"></div></label>
+      <label class="field"><span class="field-label">описание</span><textarea id="v-desc"></textarea></label>
+      <label class="field"><span class="field-label">количество открытых мест</span><input type="number" min="1" class="field-input" id="v-positions" value="1" /></label>
+      <label class="field"><span class="field-label">статус</span>
+        <select class="select" id="v-status">
+          <option value="active">активна</option>
+          <option value="paused">приостановлена</option>
+          <option value="closed">закрыта</option>
+        </select>
+      </label>
+      <label class="field"><span class="field-label">дата открытия</span><input type="date" class="field-input" id="v-open-date" /></label>
+      <label class="field"><span class="field-label">дата закрытия</span><input type="date" class="field-input" id="v-close-date" /></label>
+      <label class="field"><span class="field-label">комментарий</span><textarea id="v-comment"></textarea></label>
+    `,
+    footerHtml: `
+      <button class="btn btn-secondary" id="v-cancel">отмена</button>
+      <button class="btn btn-primary" id="v-save">сохранить</button>
+    `,
+    onMount: (overlay, close) => {
+      overlay.querySelectorAll(".field-input, .select, textarea").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
+      });
+
+      const managerContainer = overlay.querySelector("#v-manager-container");
+      if (managerOptions.length > 0) {
+        const defaultManager = state.currentUser?.uid || managerOptions[0]?.value || "";
+        createCustomSelect(managerContainer, managerOptions, defaultManager);
+      }
+
+      overlay.querySelector("#v-cancel").addEventListener("click", close);
+      overlay.querySelector("#v-save").addEventListener("click", async () => {
+        const title = overlay.querySelector("#v-title").value.trim();
+        if (!title) { showToast("укажите название вакансии", "error"); return; }
+
+        const managerSelect = managerContainer.querySelector('.custom-select');
+        const managerId = managerSelect ? managerSelect.querySelector('.custom-select-item.active')?.dataset.value : null;
+
+        const payload = {
+          title,
+          managerId: managerId || null,
+          manager: managerId ? state.users[managerId]?.name : null,
+          description: overlay.querySelector("#v-desc").value.trim(),
+          positions: Number(overlay.querySelector("#v-positions").value) || 1,
+          status: overlay.querySelector("#v-status").value,
+          openedAt: overlay.querySelector("#v-open-date").value || null,
+          closedAt: overlay.querySelector("#v-close-date").value || null,
+          comment: overlay.querySelector("#v-comment").value.trim(),
+          createdAt: serverTimestamp(),
+          createdBy: state.currentUser.uid,
+        };
+
+        try {
+          await push(ref(db, "vacancies"), payload);
+          showToast("вакансия создана");
+          close();
+        } catch (err) {
+          showToast("ошибка сохранения вакансии", "error");
+        }
+      });
+    },
+  });
+});
+
+// === KANBAN ===
+const kanbanBoard = document.getElementById("kanban-board");
+
+function renderKanban() {
+  kanbanBoard.innerHTML = "";
+  const candidatesForVacancy = Object.entries(state.candidates).filter(([, c]) => c.vacancyId === state.activeVacancyId && !c.archived);
+
+  KANBAN_STAGES.forEach((stage) => {
+    const stageCandidates = candidatesForVacancy.filter(([, c]) => c.stage === stage.id);
+
+    const col = document.createElement("div");
+    col.className = "kanban-column";
+    col.dataset.stageId = stage.id;
+    col.innerHTML = `
+      <div class="kanban-column-header"><span>${stage.label}</span><span>${stageCandidates.length}</span></div>
+      <div class="kanban-cards" data-stage="${stage.id}"></div>
+    `;
+
+    const cardsWrap = col.querySelector(".kanban-cards");
+    stageCandidates
+      .sort((a, b) => sortCandidates(a[1], b[1]))
+      .forEach(([id, c]) => cardsWrap.appendChild(renderCandidateCard(id, c)));
+
+    cardsWrap.addEventListener("dragover", (e) => e.preventDefault());
+    cardsWrap.addEventListener("drop", (e) => {
       e.preventDefault();
-      column.classList.remove("drag-over");
-      const candidateId = e.dataTransfer.getData("text/candidate-id");
-      if (!candidateId) return;
-      await handleStageTransition(candidateId, stage.key);
+      const candidateId = e.dataTransfer.getData("text/plain");
+      handleCandidateDrop(candidateId, stage.id);
     });
 
-    board.appendChild(column);
+    kanbanBoard.appendChild(col);
   });
-  workspace.appendChild(el("div", { class: "kanban-header" }, [el("h2", {}, "Kanban")]));
-  workspace.appendChild(board);
 }
 
-function candidateCard(id, c) {
-  const recruiter = state.users?.[c.recruiterId];
-  const isToday = c.interviewDate === todayStr();
-  const card = el("div", { class: "candidate-card" + (isToday ? " highlight-today" : ""), draggable: "true", onclick: () => openCandidateModal(id) }, [
-    el("div", { class: "candidate-card-top" }, [
-      el("div", {}, [
-        el("div", { class: "candidate-name" }, c.fio),
-        el("div", { class: "candidate-phone" }, c.phone || ""),
-      ]),
-      el("div", { class: "avatar", style: `background:${colorFromString(c.recruiterId || c.fio)}` }, initials(recruiter ? recruiter.name : c.fio)),
-    ]),
-    el("div", { class: "indicator-row" }, candidateIndicators(c)),
-    el("div", { class: "candidate-meta" }, [
-      el("div", { class: "candidate-tags" }, Object.keys(c.tags || {}).map(tid => tagChip(tid)).filter(Boolean)),
-      c.interviewDate ? el("span", { class: "text-secondary", style: "font-size:11px" }, fmtDate(c.interviewDate)) : null,
-    ]),
-  ]);
+function sortCandidates(a, b) {
+  const aToday = isInterviewToday(a) ? 0 : 1;
+  const bToday = isInterviewToday(b) ? 0 : 1;
+  if (aToday !== bToday) return aToday - bToday;
+  const aDate = a.interviewDate ? new Date(a.interviewDate).getTime() : Infinity;
+  const bDate = b.interviewDate ? new Date(b.interviewDate).getTime() : Infinity;
+  if (aDate !== bDate) return aDate - bDate;
+  return (a.createdAt || 0) - (b.createdAt || 0);
+}
+
+function isInterviewToday(c) {
+  if (!c.interviewDate) return false;
+  return c.interviewDate === new Date().toISOString().slice(0, 10);
+}
+
+function renderCandidateCard(id, c) {
+  const card = document.createElement("div");
+  card.className = "kanban-card";
+  card.draggable = true;
+  card.dataset.id = id;
+
+  const tags = [];
+  if (isInterviewToday(c)) tags.push('<span class="tag tag-warning">собеседование сегодня</span>');
+  if (!c.hasForm) tags.push('<span class="tag tag-info">нет анкеты</span>');
+  if (c.stage === "hired") tags.push('<span class="tag tag-success">трудоустроен</span>');
+  if (c.archived) tags.push('<span class="tag tag-danger">архив</span>');
+  if (c.archiveReason) tags.push(`<span class="tag tag-danger">${escapeHtml(c.archiveReason)}</span>`);
+  if (c.tags) {
+    c.tags.forEach(t => {
+      if (t === "черный список") tags.push(`<span class="tag tag-danger">${escapeHtml(t)}</span>`);
+      else tags.push(`<span class="tag tag-info">${escapeHtml(t)}</span>`);
+    });
+  }
+
+  card.innerHTML = `
+    <div class="kanban-card-name">${escapeHtml(c.name || "без имени")}</div>
+    <div class="kanban-card-phone">${formatPhone(c.phone)}</div>
+    <div class="kanban-card-tags">${tags.join("")}</div>
+    <div class="kanban-card-footer">
+      <span class="progress-label">${c.recruiterName ? escapeHtml(c.recruiterName) : ""}</span>
+      <span class="progress-label">${c.createdAt ? formatDate(c.createdAt) : ""}</span>
+    </div>
+  `;
+
   card.addEventListener("dragstart", (e) => {
-    e.dataTransfer.setData("text/candidate-id", id);
-    setTimeout(() => card.classList.add("dragging"), 0);
+    card.classList.add("dragging");
+    e.dataTransfer.setData("text/plain", id);
   });
   card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  card.addEventListener("click", () => openCandidateModal(id));
+
   return card;
 }
-function candidateIndicators(c) {
-  const items = [];
-  if (!c.formLink) items.push(el("span", { class: "indicator", title: "Отсутствует анкета" }, "📋"));
-  if (c.interviewDate === todayStr()) items.push(el("span", { class: "indicator", title: "Сегодня собеседование" }, "🕒"));
-  if (c.archived) items.push(el("span", { class: "indicator", title: "Архив" }, "🗄"));
-  if (c.stage === "employment") items.push(el("span", { class: "indicator", title: "Трудоустроен" }, "✅"));
-  if (c.tags && Object.keys(c.tags).some(tid => state.tags?.[tid]?.name === "Чёрный список")) items.push(el("span", { class: "indicator", title: "Чёрный список" }, "⛔"));
-  return items;
-}
-function tagChip(tagId) {
-  const tag = state.tags?.[tagId];
-  if (!tag) return null;
-  return el("span", { class: "tag-chip", style: `background:${tag.color}` }, tag.name);
+
+// === ПЕРЕХОДЫ МЕЖДУ ЭТАПАМИ ===
+const TRANSITION_RULES = [
+  {
+    from: "interview",
+    to: "selected2",
+    check: (c) => !!c.hasForm,
+    message: "анкета кандидата не загружена.\n\nвы действительно хотите перевести кандидата на следующий этап без анкеты?",
+  },
+];
+
+async function handleCandidateDrop(candidateId, targetStage) {
+  const candidate = state.candidates[candidateId];
+  if (!candidate || candidate.stage === targetStage) return;
+
+  const rule = TRANSITION_RULES.find((r) => r.from === candidate.stage && r.to === targetStage);
+  if (rule && !rule.check(candidate)) {
+    const proceed = await confirmDialog(rule.message.replace(/\n/g, "<br>"));
+    if (!proceed) return;
+  }
+
+  await moveCandidateToStage(candidateId, targetStage);
 }
 
-async function handleStageTransition(candidateId, newStage) {
+async function moveCandidateToStage(candidateId, targetStage) {
+  const updates = { stage: targetStage };
+  if (targetStage === "hired") updates.hiredAt = new Date().toISOString();
+
+  await update(ref(db, `candidates/${candidateId}`), updates);
+  await push(ref(db, `candidates/${candidateId}/history`), {
+    action: `этап изменён на «${KANBAN_STAGES.find((s) => s.id === targetStage)?.label}»`,
+    userName: state.currentUser.name || state.currentUser.email,
+    at: serverTimestamp(),
+  });
+  showToast("этап обновлён");
+}
+
+// === ДОБАВЛЕНИЕ КАНДИДАТА (с проверкой дублей) ===
+document.getElementById("add-candidate-btn").addEventListener("click", () => {
+  if (!state.activeVacancyId) return;
+
+  openModal({
+    title: "новый кандидат",
+    bodyHtml: `
+      <label class="field"><span class="field-label">имя</span><input class="field-input" id="c-name" /></label>
+      <label class="field"><span class="field-label">телефон</span><input class="field-input" id="c-phone" placeholder="7 999 999-99-99" /></label>
+      <label class="field"><span class="field-label">источник</span>
+        <select class="select" id="c-source">
+          <option value="hh">hh</option>
+          <option value="avito">авито</option>
+          <option value="other">прочее</option>
+        </select>
+      </label>
+      <label class="field"><span class="field-label">теги</span><input class="field-input" id="c-tags" placeholder="теги через запятую" /></label>
+    `,
+    footerHtml: `
+      <button class="btn btn-secondary" id="c-cancel">отмена</button>
+      <button class="btn btn-primary" id="c-save">сохранить</button>
+    `,
+    onMount: (overlay, close) => {
+      overlay.querySelectorAll(".field-input, .select").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
+      });
+
+      overlay.querySelector("#c-cancel").addEventListener("click", close);
+      overlay.querySelector("#c-save").addEventListener("click", async () => {
+        const name = overlay.querySelector("#c-name").value.trim();
+        const phone = overlay.querySelector("#c-phone").value.trim();
+        if (!name && !phone) { showToast("укажите имя или телефон кандидата", "error"); return; }
+
+        // Проверка на дубли
+        const existing = Object.entries(state.candidates).find(([, c]) => {
+          const nameMatch = name && c.name?.toLowerCase() === name.toLowerCase();
+          const phoneMatch = phone && c.phone === phone;
+          return nameMatch || phoneMatch;
+        });
+
+        if (existing) {
+          const [existingId] = existing;
+          showToast("кандидат уже есть в базе, открываю карточку");
+          close();
+          switchSection("candidates");
+          setTimeout(() => openCandidateModal(existingId), 300);
+          return;
+        }
+
+        const tags = overlay.querySelector("#c-tags").value.split(",").map(t => t.trim()).filter(Boolean);
+
+        await push(ref(db, "candidates"), {
+          name,
+          phone,
+          source: overlay.querySelector("#c-source").value,
+          vacancyId: state.activeVacancyId,
+          stage: "response",
+          hasForm: false,
+          archived: false,
+          recruiterId: state.currentUser.uid,
+          recruiterName: state.currentUser.name || state.currentUser.email,
+          createdAt: Date.now(),
+          tags,
+          noShowCount: 0,
+        });
+        showToast("кандидат добавлен");
+        close();
+      });
+    },
+  });
+});
+
+// === КАРТОЧКА КАНДИДАТА ===
+function openCandidateModal(candidateId) {
   const c = state.candidates[candidateId];
-  if (!c || c.stage === newStage) return;
+  if (!c) return;
 
-  if (c.stage === "interview" && newStage === "selected" && !c.formLink) {
-    const ok = await confirmModal({
-      title: "Анкета кандидата не указана",
-      message: "Продолжить перевод кандидата без анкеты?",
-      confirmLabel: "Продолжить",
-    });
-    if (!ok) return;
+  const historyHtml = (c.history || []).slice(-10).reverse().map(h => `
+    <div class="history-item">
+      <span class="history-time">${formatDate(h.at)}</span>
+      <span class="history-action">${escapeHtml(h.action)}</span>
+      <span class="history-user">${escapeHtml(h.userName || "")}</span>
+    </div>
+  `).join("");
+
+  openModal({
+    title: escapeHtml(c.name || "кандидат"),
+    wide: true,
+    bodyHtml: `
+      <label class="field"><span class="field-label">телефон</span><input class="field-input" id="cc-phone" value="${escapeHtml(c.phone || "")}" placeholder="7 999 999-99-99" /></label>
+      <label class="field"><span class="field-label">источник</span>
+        <select class="select" id="cc-source">
+          <option value="hh" ${c.source === "hh" ? "selected" : ""}>hh</option>
+          <option value="avito" ${c.source === "avito" ? "selected" : ""}>авито</option>
+          <option value="other" ${c.source === "other" ? "selected" : ""}>прочее</option>
+        </select>
+      </label>
+      <label class="field"><span class="field-label">теги (через запятую)</span><input class="field-input" id="cc-tags" value="${escapeHtml((c.tags || []).join(", "))}" /></label>
+      <div class="field"><span class="field-label">документы</span>
+        <div class="doc-slots">${DOC_TYPES.map((t) => renderDocSlot(candidateId, t, c.documents?.[t.key])).join("")}</div>
+      </div>
+      <label class="field"><span class="field-label">заметки</span><textarea id="cc-notes">${escapeHtml(c.notes || "")}</textarea></label>
+      <div class="field"><span class="field-label">история изменений</span>
+        <div class="history-list">${historyHtml || "<div class='empty-state'>нет записей</div>"}</div>
+      </div>
+      <div class="field"><span class="field-label">собеседование</span>
+        <div style="display:flex;gap:8px;">
+          <input type="date" class="field-input" id="cc-interview-date" value="${formatDateInput(c.interviewDate)}" style="flex:1;" />
+          <input type="time" class="field-input" id="cc-interview-time" value="${escapeHtml(c.interviewTime || "")}" style="flex:1;" />
+        </div>
+        <button class="btn btn-secondary" id="cc-mark-no-show">отметить "не пришёл" (${c.noShowCount || 0}/3)</button>
+      </div>
+    `,
+    footerHtml: `
+      <button class="btn btn-danger" id="cc-delete">удалить</button>
+      <button class="btn btn-secondary" id="cc-archive">архивировать</button>
+      <button class="btn btn-primary" id="cc-save">сохранить</button>
+    `,
+    onMount: (overlay, close) => {
+      overlay.querySelectorAll(".field-input, .select").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
+      });
+
+      bindDocSlots(overlay, candidateId);
+
+      overlay.querySelector("#cc-save").addEventListener("click", async () => {
+        const tags = overlay.querySelector("#cc-tags").value.split(",").map(t => t.trim()).filter(Boolean);
+        await update(ref(db, `candidates/${candidateId}`), {
+          phone: overlay.querySelector("#cc-phone").value.trim(),
+          source: overlay.querySelector("#cc-source").value,
+          notes: overlay.querySelector("#cc-notes").value,
+          tags,
+          interviewDate: overlay.querySelector("#cc-interview-date").value || null,
+          interviewTime: overlay.querySelector("#cc-interview-time").value || null,
+        });
+        showToast("сохранено");
+        close();
+      });
+
+      overlay.querySelector("#cc-archive").addEventListener("click", async () => {
+        await update(ref(db, `candidates/${candidateId}`), { archived: true, archivedAt: Date.now() });
+        showToast("кандидат архивирован");
+        close();
+      });
+
+      overlay.querySelector("#cc-delete").addEventListener("click", async () => {
+        const ok = await confirmDialog("вы действительно хотите удалить кандидата?");
+        if (!ok) return;
+        await remove(ref(db, `candidates/${candidateId}`));
+        showToast("кандидат удалён");
+        close();
+      });
+
+      overlay.querySelector("#cc-mark-no-show").addEventListener("click", async () => {
+        await markNoShow(candidateId);
+        close();
+      });
+    },
+  });
+}
+
+// === ДОКУМЕНТЫ ===
+function renderDocSlot(candidateId, docType, docData) {
+  if (docData) {
+    return `
+      <div class="doc-slot doc-slot-filled" data-doc="${docType.key}">
+        <div class="doc-slot-info">
+          <span class="doc-slot-icon">📄</span>
+          <div>
+            <div class="doc-slot-name">${escapeHtml(docData.name)}</div>
+            <div class="doc-slot-label">${docType.label}</div>
+          </div>
+        </div>
+        <div class="doc-slot-actions">
+          <button class="btn btn-ghost btn-sm" data-action="open" data-doc="${docType.key}">открыть</button>
+          <button class="btn btn-secondary btn-sm" data-action="replace" data-doc="${docType.key}">заменить</button>
+          <button class="btn btn-danger btn-sm" data-action="delete" data-doc="${docType.key}">удалить</button>
+        </div>
+        <input type="file" accept="application/pdf" hidden data-input="${docType.key}" />
+      </div>
+    `;
   }
-
-  const updates = { stage: newStage, stageChangedAt: Date.now() };
-  if (newStage === "employment") updates.employmentDate = Date.now();
-
-  await updatePath(`candidates/${candidateId}`, updates);
-  await logHistory(candidateId, `Этап изменён на «${STAGES.find(s => s.key === newStage)?.label}»`);
-  toast("Этап обновлён", "success");
+  return `
+    <div class="doc-slot doc-slot-empty" data-doc="${docType.key}">
+      <div class="doc-slot-dropzone" data-dropzone="${docType.key}">
+        <span>перетащите ${docType.label} (pdf) сюда или</span>
+        <button class="btn btn-secondary btn-sm" data-action="pick" data-doc="${docType.key}">выбрать файл</button>
+      </div>
+      <input type="file" accept="application/pdf" hidden data-input="${docType.key}" />
+    </div>
+  `;
 }
 
-async function logHistory(candidateId, action) {
-  await pushPath(`activityLogs/${candidateId}`, { date: Date.now(), action });
+function bindDocSlots(overlay, candidateId) {
+  DOC_TYPES.forEach((docType) => bindSingleDocSlot(overlay, candidateId, docType));
 }
 
-// ---------------------------------------------------------
-// ПРОВЕРКА "БОЛЕЕ 7 ДНЕЙ НА ЭТАПЕ" + ЧЁРНЫЙ СПИСОК
-// ---------------------------------------------------------
-let staleCheckRunning = false;
-async function runStaleCheck() {
-  if (staleCheckRunning) return;
-  staleCheckRunning = true;
+async function handleDocUpload(candidateId, docType, file, overlay) {
+  if (file.type !== "application/pdf") {
+    showToast("нужен файл в формате pdf", "error");
+    return;
+  }
+  if (file.size > MAX_DOC_SIZE) {
+    showToast("файл слишком большой (максимум 4мб)", "error");
+    return;
+  }
+  showToast(`загружаю ${docType.label}...`);
   try {
-    const now = Date.now();
-    for (const [id, c] of Object.entries(state.candidates || {})) {
-      if (c.archived || c.onKanban === false) continue;
-      if (!STALE_STAGES.includes(c.stage)) continue;
-      const changedAt = c.stageChangedAt || c.createdAt || now;
-      if (daysBetween(changedAt, now) > STALE_DAYS) {
-        // найдём/создадим тег "Не вышел на связь"
-        let tagId = Object.entries(state.tags || {}).find(([tid, t]) => t.name === "Не вышел на связь")?.[0];
-        if (!tagId) tagId = await pushPath("tags", { name: "Не вышел на связь", color: "#64748b" });
-        const newTags = { ...(c.tags || {}), [tagId]: true };
-        await updatePath(`candidates/${id}`, { onKanban: false, tags: newTags });
-        await logHistory(id, "Автоматически снят с Kanban (более 7 дней без изменений) и перенесён в базу кандидатов");
-      }
-    }
-  } finally {
-    staleCheckRunning = false;
+    const dataUrl = await fileToBase64(file);
+    await uploadCandidateDocument(candidateId, docType, file, dataUrl);
+    showToast(`${docType.label} загружена`);
+    refreshDocSlot(overlay, candidateId, docType);
+  } catch (err) {
+    showToast("не удалось загрузить файл. проверьте соединение и попробуйте снова", "error");
   }
 }
 
-// ---------------------------------------------------------
-// КАРТОЧКА КАНДИДАТА (МОДАЛ)
-// ---------------------------------------------------------
-function openCandidateModal(candidateId, presetData) {
-  const isEdit = !!candidateId;
-  const c = isEdit ? state.candidates[candidateId] : {
-    fio: "", phone: "7 ", vacancyId: presetData?.vacancyId || "", source: SOURCES[0], stage: presetData?.stage || "response",
-    createdAt: Date.now(), stageChangedAt: Date.now(), notes: "", tags: {}, recruiterId: state.user.uid,
-    onKanban: true,
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function openBase64Pdf(dataUrl) {
+  try {
+    const base64 = dataUrl.split(",")[1];
+    const byteChars = atob(base64);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    window.open(URL.createObjectURL(blob), "_blank");
+  } catch (err) {
+    showToast("не удалось открыть файл", "error");
+  }
+}
+
+function refreshDocSlot(overlay, candidateId, docType) {
+  const c = state.candidates[candidateId];
+  const oldSlot = overlay.querySelector(`.doc-slot[data-doc="${docType.key}"]`);
+  if (!oldSlot) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderDocSlot(candidateId, docType, c?.documents?.[docType.key]);
+  const newSlot = wrapper.firstElementChild;
+  oldSlot.replaceWith(newSlot);
+  bindSingleDocSlot(overlay, candidateId, docType);
+}
+
+function bindSingleDocSlot(overlay, candidateId, docType) {
+  const slot = overlay.querySelector(`.doc-slot[data-doc="${docType.key}"]`);
+  if (!slot) return;
+  const fileInput = slot.querySelector(`input[data-input="${docType.key}"]`);
+  const pickBtn = slot.querySelector('[data-action="pick"]');
+  const replaceBtn = slot.querySelector('[data-action="replace"]');
+  const deleteBtn = slot.querySelector('[data-action="delete"]');
+  const openBtn = slot.querySelector('[data-action="open"]');
+
+  if (pickBtn) pickBtn.addEventListener("click", () => fileInput.click());
+  if (replaceBtn) replaceBtn.addEventListener("click", () => fileInput.click());
+  if (openBtn) openBtn.addEventListener("click", () => {
+    const c = state.candidates[candidateId];
+    const docData = c?.documents?.[docType.key];
+    if (docData) openBase64Pdf(docData.dataUrl);
+  });
+  if (deleteBtn) deleteBtn.addEventListener("click", async () => {
+    const ok = await confirmDialog(`удалить ${docType.label}?`);
+    if (!ok) return;
+    await deleteCandidateDocument(candidateId, docType);
+    refreshDocSlot(overlay, candidateId, docType);
+  });
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    await handleDocUpload(candidateId, docType, file, overlay);
+  });
+
+  const dropzone = slot.querySelector(`[data-dropzone="${docType.key}"]`);
+  if (dropzone) {
+    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("doc-dropzone-active"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("doc-dropzone-active"));
+    dropzone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("doc-dropzone-active");
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      await handleDocUpload(candidateId, docType, file, overlay);
+    });
+  }
+}
+
+async function uploadCandidateDocument(candidateId, docType, file, dataUrl) {
+  const docPayload = { name: file.name, dataUrl, size: file.size, uploadedAt: Date.now(), uploadedBy: state.currentUser.uid };
+  const updates = { [`documents/${docType.key}`]: docPayload };
+  if (docType.key === "anketa") updates.hasForm = true;
+
+  await update(ref(db, `candidates/${candidateId}`), updates);
+  await push(ref(db, `candidates/${candidateId}/history`), {
+    action: `загрузил(а) ${docType.label}`,
+    userName: state.currentUser.name || state.currentUser.email,
+    at: serverTimestamp(),
+  });
+}
+
+async function deleteCandidateDocument(candidateId, docType) {
+  const updates = { [`documents/${docType.key}`]: null };
+  if (docType.key === "anketa") updates.hasForm = false;
+  await update(ref(db, `candidates/${candidateId}`), updates);
+  await push(ref(db, `candidates/${candidateId}/history`), {
+    action: `удалил(а) ${docType.label}`,
+    userName: state.currentUser.name || state.currentUser.email,
+    at: serverTimestamp(),
+  });
+  showToast(`${docType.label} удалена`);
+}
+
+// === БАЗА КАНДИДАТОВ ===
+const candidatesTableBody = document.getElementById("candidates-table-body");
+const candidatesSearch = document.getElementById("candidates-search");
+const filterVacancy = document.getElementById("candidates-filter-vacancy");
+const filterStage = document.getElementById("candidates-filter-stage");
+const filterSource = document.getElementById("candidates-filter-source");
+
+[candidatesSearch, filterVacancy, filterStage, filterSource].forEach((el) => el.addEventListener("input", renderCandidatesTable));
+
+function renderCandidateFilters() {
+  filterVacancy.innerHTML = '<option value="all">все вакансии</option>' +
+    Object.entries(state.vacancies).map(([id, v]) => `<option value="${id}">${escapeHtml(v.title)}</option>`).join("");
+  filterStage.innerHTML = '<option value="all">все этапы</option>' +
+    KANBAN_STAGES.map((s) => `<option value="${s.id}">${s.label}</option>`).join("");
+}
+
+function renderCandidatesTable() {
+  const term = candidatesSearch.value.trim().toLowerCase();
+  const vId = filterVacancy.value;
+  const stg = filterStage.value;
+  const src = filterSource.value;
+
+  candidatesTableBody.innerHTML = "";
+  Object.entries(state.candidates)
+    .filter(([, c]) => {
+      const matchesTerm = !term ||
+        (c.name || "").toLowerCase().includes(term) ||
+        (c.phone || "").toLowerCase().includes(term) ||
+        (state.vacancies[c.vacancyId]?.title || "").toLowerCase().includes(term);
+      const matchesVacancy = vId === "all" || c.vacancyId === vId;
+      const matchesStage = stg === "all" || c.stage === stg;
+      const matchesSource = src === "all" || c.source === src;
+      return matchesTerm && matchesVacancy && matchesStage && matchesSource && !c.archived;
+    })
+    .forEach(([id, c]) => {
+      const tr = document.createElement("tr");
+      const stageLabel = KANBAN_STAGES.find((s) => s.id === c.stage)?.label || c.stage;
+      tr.innerHTML = `
+        <td>${escapeHtml(c.name || "")}</td>
+        <td>${formatPhone(c.phone)}</td>
+        <td>${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</td>
+        <td>${escapeHtml(stageLabel || "")}</td>
+        <td>${escapeHtml(c.source || "")}</td>
+        <td>${c.createdAt ? formatDate(c.createdAt) : ""}</td>
+        <td>${escapeHtml(c.recruiterName || "")}</td>
+        <td>${(c.tags || []).map(t => `<span class="tag tag-info">${escapeHtml(t)}</span>`).join("")}</td>
+      `;
+      tr.addEventListener("click", () => openCandidateModal(id));
+      candidatesTableBody.appendChild(tr);
+    });
+}
+
+// === ПОЛЬЗОВАТЕЛИ ===
+const usersTableBody = document.getElementById("users-table-body");
+
+function renderUsersTable() {
+  usersTableBody.innerHTML = "";
+  Object.entries(state.users).forEach(([uid, u]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(u.name || "")}</td>
+      <td>${escapeHtml(u.email || "")}</td>
+      <td>${formatPhone(u.phone || "")}</td>
+      <td>${u.role === "admin" ? "администратор" : "рекрутер"}</td>
+      <td style="text-align:right;">
+        ${u.isMainAdmin ? '<span class="progress-label">главный админ</span>' : `
+          <button class="btn btn-ghost btn-sm" data-action="edit-user" data-uid="${uid}">изменить</button>
+          <button class="btn btn-ghost btn-sm" data-action="delete-user" data-uid="${uid}">удалить</button>
+        `}
+      </td>
+    `;
+    usersTableBody.appendChild(tr);
+  });
+
+  usersTableBody.querySelectorAll('[data-action="edit-user"]').forEach((btn) =>
+    btn.addEventListener("click", () => openEditUserModal(btn.dataset.uid)));
+  usersTableBody.querySelectorAll('[data-action="delete-user"]').forEach((btn) =>
+    btn.addEventListener("click", () => handleDeleteUser(btn.dataset.uid)));
+}
+
+document.getElementById("add-user-btn").addEventListener("click", () => {
+  openModal({
+    title: "новый пользователь",
+    bodyHtml: `
+      <label class="field"><span class="field-label">имя</span><input class="field-input" id="u-name" /></label>
+      <label class="field"><span class="field-label">email</span><input type="email" class="field-input" id="u-email" /></label>
+      <label class="field"><span class="field-label">телефон</span><input class="field-input" id="u-phone" placeholder="7 999 999-99-99" /></label>
+      <label class="field"><span class="field-label">пароль</span><input type="password" class="field-input" id="u-password" /></label>
+      <label class="field"><span class="field-label">роль</span>
+        <select class="select" id="u-role">
+          <option value="recruiter">рекрутер</option>
+          <option value="admin">администратор</option>
+        </select>
+      </label>
+    `,
+    footerHtml: `
+      <button class="btn btn-secondary" id="u-cancel">отмена</button>
+      <button class="btn btn-primary" id="u-save">создать</button>
+    `,
+    onMount: (overlay, close) => {
+      overlay.querySelectorAll(".field-input, .select").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
+      });
+      overlay.querySelector("#u-cancel").addEventListener("click", close);
+      overlay.querySelector("#u-save").addEventListener("click", async () => {
+        const name = overlay.querySelector("#u-name").value.trim();
+        const email = overlay.querySelector("#u-email").value.trim();
+        const phone = overlay.querySelector("#u-phone").value.trim();
+        const password = overlay.querySelector("#u-password").value;
+        const role = overlay.querySelector("#u-role").value;
+
+        if (!name || !email || password.length < 6) {
+          showToast("заполните имя, email и пароль (мин. 6 символов)", "error");
+          return;
+        }
+
+        const saveBtn = overlay.querySelector("#u-save");
+        saveBtn.disabled = true;
+        try {
+          await createUserAsAdmin({ email, password, name, phone, role });
+          showToast("пользователь создан");
+          close();
+        } catch (err) {
+          showToast(err.code === "auth/email-already-in-use" ? "такой email уже используется" : "ошибка создания пользователя", "error");
+          saveBtn.disabled = false;
+        }
+      });
+    },
+  });
+});
+
+function openEditUserModal(uid) {
+  const u = state.users[uid];
+  if (!u) return;
+  openModal({
+    title: "изменить пользователя",
+    bodyHtml: `
+      <label class="field"><span class="field-label">имя</span><input class="field-input" id="eu-name" value="${escapeHtml(u.name || "")}" /></label>
+      <label class="field"><span class="field-label">телефон</span><input class="field-input" id="eu-phone" value="${escapeHtml(u.phone || "")}" placeholder="7 999 999-99-99" /></label>
+      <label class="field"><span class="field-label">роль</span>
+        <select class="select" id="eu-role">
+          <option value="recruiter" ${u.role === "recruiter" ? "selected" : ""}>рекрутер</option>
+          <option value="admin" ${u.role === "admin" ? "selected" : ""}>администратор</option>
+        </select>
+      </label>
+      <p style="color:var(--text-secondary);font-size:12px;margin:0;">
+        смена пароля другого пользователя недоступна на бесплатном тарифе firebase (нужен admin sdk / план blaze) —
+        пусть меняет пароль сам через настройки → профиль.
+      </p>
+    `,
+    footerHtml: `
+      <button class="btn btn-secondary" id="eu-cancel">отмена</button>
+      <button class="btn btn-primary" id="eu-save">сохранить</button>
+    `,
+    onMount: (overlay, close) => {
+      overlay.querySelectorAll(".field-input, .select").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
+      });
+      overlay.querySelector("#eu-cancel").addEventListener("click", close);
+      overlay.querySelector("#eu-save").addEventListener("click", async () => {
+        await update(ref(db, `users/${uid}`), {
+          name: overlay.querySelector("#eu-name").value.trim(),
+          phone: overlay.querySelector("#eu-phone").value.trim(),
+          role: overlay.querySelector("#eu-role").value,
+        });
+        showToast("пользователь обновлён");
+        close();
+      });
+    },
+  });
+}
+
+async function handleDeleteUser(uid) {
+  const u = state.users[uid];
+  if (!u) return;
+  const ok = await confirmDialog(`удалить пользователя «${escapeHtml(u.name)}»? его кандидаты перейдут главному администратору.`);
+  if (!ok) return;
+
+  const mainAdminEntry = Object.entries(state.users).find(([, x]) => x.isMainAdmin);
+  if (!mainAdminEntry) { showToast("не найден главный администратор для передачи кандидатов", "error"); return; }
+  const [mainAdminUid, mainAdminData] = mainAdminEntry;
+
+  const reassignedCandidates = Object.entries(state.candidates).filter(([, c]) => c.recruiterId === uid);
+  const updates = {};
+  reassignedCandidates.forEach(([id]) => {
+    updates[`candidates/${id}/recruiterId`] = mainAdminUid;
+    updates[`candidates/${id}/recruiterName`] = mainAdminData.name;
+  });
+  updates[`users/${uid}`] = null;
+
+  await update(ref(db), updates);
+  showToast("пользователь удалён, кандидаты переданы главному администратору");
+}
+
+// === ИМПОРТ/ЭКСПОРТ КАНДИДАТОВ ===
+document.getElementById("export-candidates-btn")?.addEventListener("click", () => {
+  const data = Object.entries(state.candidates).map(([id, c]) => ({
+    id,
+    name: c.name,
+    phone: c.phone,
+    source: c.source,
+    vacancy: state.vacancies[c.vacancyId]?.title || "",
+    stage: KANBAN_STAGES.find(s => s.id === c.stage)?.label || c.stage,
+    recruiter: c.recruiterName,
+    createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : "",
+    tags: (c.tags || []).join(", "),
+    notes: c.notes || "",
+    archived: c.archived || false,
+    noShowCount: c.noShowCount || 0,
+  }));
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `candidates-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  showToast("кандидаты экспортированы");
+});
+
+document.getElementById("import-candidates-btn")?.addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json";
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) throw new Error("ожидается массив кандидатов");
+
+      const ok = await confirmDialog(`найдено ${data.length} кандидатов. импортировать?`);
+      if (!ok) return;
+
+      let imported = 0;
+      for (const c of data) {
+        const payload = {
+          name: c.name || "без имени",
+          phone: c.phone || "",
+          source: c.source || "other",
+          stage: c.stage || "response",
+          recruiterId: state.currentUser.uid,
+          recruiterName: state.currentUser.name || state.currentUser.email,
+          createdAt: c.createdAt ? new Date(c.createdAt).getTime() : Date.now(),
+          tags: c.tags ? c.tags.split(",").map(t => t.trim()).filter(Boolean) : [],
+          notes: c.notes || "",
+          archived: c.archived || false,
+          noShowCount: c.noShowCount || 0,
+          hasForm: false,
+        };
+
+        // ищем вакансию по названию
+        if (c.vacancy) {
+          const vacancyEntry = Object.entries(state.vacancies).find(([, v]) => v.title === c.vacancy);
+          if (vacancyEntry) payload.vacancyId = vacancyEntry[0];
+        }
+
+        await push(ref(db, "candidates"), payload);
+        imported++;
+      }
+
+      showToast(`импортировано ${imported} кандидатов`);
+    } catch (err) {
+      showToast("ошибка импорта: " + err.message, "error");
+    }
+  };
+  input.click();
+});
+
+// === АНАЛИТИКА ===
+const PERIODS = [
+  { value: "day", label: "день" },
+  { value: "week", label: "неделя" },
+  { value: "month", label: "месяц" },
+  { value: "year", label: "год" },
+];
+
+function renderAnalytics() {
+  const period = document.getElementById("analytics-period")?.value || "week";
+  const candidates = Object.values(state.candidates);
+  const now = Date.now();
+
+  // Фильтр по периоду
+  const periodMs = {
+    day: 24 * 60 * 60 * 1000,
+    week: 7 * 24 * 60 * 60 * 1000,
+    month: 30 * 24 * 60 * 60 * 1000,
+    year: 365 * 24 * 60 * 60 * 1000,
   };
 
-  let activeTab = "info";
-  const draft = { ...c, tags: { ...(c.tags || {}) } };
+  const cutoff = now - (periodMs[period] || periodMs.week);
+  const filtered = candidates.filter(c => (c.createdAt || 0) >= cutoff);
 
-  const content = el("div", {});
-  const head = el("div", { class: "modal-head" }, [
-    el("h3", {}, isEdit ? draft.fio : "Новый кандидат"),
-    el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕"),
-  ]);
-  const tabsBar = el("div", { class: "tabs" });
-  const bodyWrap = el("div", { class: "modal-body" });
-  const footer = el("div", { class: "modal-footer" });
-  content.append(head, tabsBar, bodyWrap, footer);
-
-  const tabDefs = isEdit
-    ? [["info", "Основное"], ["stage", "Этап"], ["interview", "Собеседование"], ["docs", "Документы"], ["notes", "Заметки"], ["tags", "Теги"], ["history", "История"]]
-    : [["info", "Основное"]];
-
-  tabDefs.forEach(([key, label]) => {
-    const btn = el("button", { class: "tab-btn" + (key === activeTab ? " active" : ""), onclick: () => { activeTab = key; renderTabs(); renderBody(); } }, label);
-    btn.dataset.tab = key;
-    tabsBar.appendChild(btn);
+  // Конверсия по этапам
+  const stageCounts = {};
+  KANBAN_STAGES.forEach(s => stageCounts[s.id] = 0);
+  filtered.forEach(c => {
+    if (stageCounts[c.stage] !== undefined) stageCounts[c.stage]++;
   });
-  function renderTabs() {
-    $all(".tab-btn", tabsBar).forEach(b => b.classList.toggle("active", b.dataset.tab === activeTab));
-  }
 
-  function renderBody() {
-    bodyWrap.innerHTML = "";
-    if (activeTab === "info") bodyWrap.appendChild(tabInfo());
-    if (activeTab === "stage") bodyWrap.appendChild(tabStage());
-    if (activeTab === "interview") bodyWrap.appendChild(tabInterview());
-    if (activeTab === "docs") bodyWrap.appendChild(tabDocs());
-    if (activeTab === "notes") bodyWrap.appendChild(tabNotes());
-    if (activeTab === "tags") bodyWrap.appendChild(tabTags());
-    if (activeTab === "history") bodyWrap.appendChild(tabHistory());
-  }
+  const total = filtered.length;
+  const responseCount = stageCounts.response || 0;
+  const hiredCount = stageCounts.hired || 0;
+  const conversionRate = total > 0 ? Math.round((hiredCount / total) * 100) : 0;
 
-  function tabInfo() {
-    const fioInput = el("input", { value: draft.fio || "" });
-    fioInput.addEventListener("input", () => draft.fio = fioInput.value);
-    const phoneInput = el("input", { value: draft.phone || "7 " });
-    phoneInput.addEventListener("input", () => { phoneInput.value = maskPhone(phoneInput.value); draft.phone = phoneInput.value; });
+  // По источникам
+  const sourceCounts = {};
+  filtered.forEach(c => {
+    const src = c.source || "other";
+    sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+  });
 
-    const vacancyDD = buildDropdown({
-      options: Object.entries(state.vacancies || {}).map(([id, v]) => ({ value: id, label: v.title })),
-      value: draft.vacancyId, placeholder: "Выбрать вакансию", allowEmpty: false,
-      onChange: (v) => draft.vacancyId = v,
+  // По рекрутерам
+  const recruiterCounts = {};
+  filtered.forEach(c => {
+    const recruiter = c.recruiterName || "неизвестен";
+    recruiterCounts[recruiter] = (recruiterCounts[recruiter] || 0) + 1;
+  });
+
+  // По тегам
+  const tagCounts = {};
+  filtered.forEach(c => {
+    (c.tags || []).forEach(t => {
+      tagCounts[t] = (tagCounts[t] || 0) + 1;
     });
-    const sourceDD = buildDropdown({
-      options: SOURCES.map(s => ({ value: s, label: s })), value: draft.source || SOURCES[0], allowEmpty: false, searchable: false,
-      onChange: (v) => draft.source = v,
-    });
+  });
 
-    return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, [
-      el("div", { class: "field" }, [el("label", {}, "ФИО"), fioInput]),
-      el("div", { class: "form-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Телефон"), phoneInput]),
-        el("div", { class: "field" }, [el("label", {}, "Источник"), sourceDD]),
-      ]),
-      el("div", { class: "field" }, [el("label", {}, "Вакансия"), vacancyDD]),
-    ]);
-  }
+  // Архив
+  const archivedCount = filtered.filter(c => c.archived).length;
 
-  function tabStage() {
-    const stageDD = buildDropdown({
-      options: STAGES.map(s => ({ value: s.key, label: s.label })), value: draft.stage, allowEmpty: false, searchable: false,
-      onChange: (v) => draft.stage = v,
-    });
-    return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, [
-      el("div", { class: "field" }, [el("label", {}, "Текущий этап"), stageDD]),
-      el("div", { class: "text-secondary", style: "font-size:12px" }, [
-        el("div", {}, `Дата создания: ${fmtDate(draft.createdAt)}`),
-        el("div", {}, `Дата трудоустройства: ${fmtDate(draft.employmentDate)}`),
-        el("div", {}, `Дата увольнения: ${fmtDate(draft.dismissalDate)}`),
-      ]),
-    ]);
-  }
+  const container = document.getElementById("analytics-content");
+  if (!container) return;
 
-  function tabInterview() {
-    const dateInput = el("input", { type: "date", value: draft.interviewDate || "" });
-    dateInput.addEventListener("input", () => draft.interviewDate = dateInput.value);
-    const timeInput = el("input", { type: "time", value: draft.interviewTime || "" });
-    timeInput.addEventListener("input", () => draft.interviewTime = timeInput.value);
-    const commentInput = el("textarea", {}, draft.interviewComment || "");
-    commentInput.value = draft.interviewComment || "";
-    commentInput.addEventListener("input", () => draft.interviewComment = commentInput.value);
-    const noShowBtn = el("button", { class: "btn btn-secondary", type: "button", onclick: () => {
-      draft.noShowCount = (draft.noShowCount || 0) + 1;
-      toast(`Отметка «Не пришёл» (${draft.noShowCount}/3)`, "warning");
-    } }, "Отметить «Не пришёл на собеседование»");
-    return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, [
-      el("div", { class: "form-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Дата"), dateInput]),
-        el("div", { class: "field" }, [el("label", {}, "Время"), timeInput]),
-      ]),
-      el("div", { class: "field" }, [el("label", {}, "Комментарий"), commentInput]),
-      noShowBtn,
-    ]);
-  }
+  container.innerHTML = `
+    <div class="analytics-period">
+      <label class="field-label">период</label>
+      <select id="analytics-period" class="select">
+        ${PERIODS.map(p => `<option value="${p.value}" ${p.value === period ? "selected" : ""}>${p.label}</option>`).join("")}
+      </select>
+    </div>
 
-  function tabDocs() {
-    const formInput = el("input", { placeholder: "Ссылка на анкету", value: draft.formLink || "" });
-    formInput.addEventListener("input", () => draft.formLink = formInput.value);
-    const resumeInput = el("input", { placeholder: "Ссылка на резюме", value: draft.resumeLink || "" });
-    resumeInput.addEventListener("input", () => draft.resumeLink = resumeInput.value);
-    return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, [
-      el("div", { class: "field" }, [el("label", {}, "Анкета"), formInput]),
-      el("div", { class: "field" }, [el("label", {}, "Резюме"), resumeInput]),
-    ]);
-  }
+    <div class="analytics-grid">
+      <div class="analytics-card"><div class="analytics-num">${total}</div><div class="analytics-label">всего кандидатов</div></div>
+      <div class="analytics-card"><div class="analytics-num">${responseCount}</div><div class="analytics-label">откликов</div></div>
+      <div class="analytics-card"><div class="analytics-num">${hiredCount}</div><div class="analytics-label">трудоустроено</div></div>
+      <div class="analytics-card"><div class="analytics-num">${conversionRate}%</div><div class="analytics-label">конверсия</div></div>
+      <div class="analytics-card"><div class="analytics-num">${archivedCount}</div><div class="analytics-label">в архиве</div></div>
+    </div>
 
-  function tabNotes() {
-    const notesInput = el("textarea", { style: "min-height:200px" }, draft.notes || "");
-    notesInput.value = draft.notes || "";
-    notesInput.addEventListener("input", () => draft.notes = notesInput.value);
-    return el("div", { class: "field" }, [el("label", {}, "Заметки"), notesInput]);
-  }
+    <div class="analytics-bars">
+      <div class="analytics-bars-title">кандидаты по этапам</div>
+      ${renderAnalyticsBars(KANBAN_STAGES.map(s => ({ label: s.label, value: stageCounts[s.id] || 0 })))}
+    </div>
 
-  function tabTags() {
-    const wrap = el("div", { style: "display:flex;flex-direction:column;gap:14px" });
-    const chipsWrap = el("div", { class: "candidate-tags" });
-    function drawChips() {
-      chipsWrap.innerHTML = "";
-      Object.keys(draft.tags || {}).forEach(tid => {
-        const tag = state.tags?.[tid];
-        if (!tag) return;
-        chipsWrap.appendChild(el("span", { class: "tag-chip", style: `background:${tag.color}` }, [
-          tag.name, " ",
-          el("span", { style: "cursor:pointer", onclick: () => { delete draft.tags[tid]; drawChips(); } }, "✕"),
-        ]));
+    <div class="analytics-bars">
+      <div class="analytics-bars-title">кандидаты по источникам</div>
+      ${renderAnalyticsBars(Object.entries(sourceCounts).map(([label, value]) => ({ label, value })))}
+    </div>
+
+    <div class="analytics-bars">
+      <div class="analytics-bars-title">кандидаты по рекрутерам</div>
+      ${renderAnalyticsBars(Object.entries(recruiterCounts).map(([label, value]) => ({ label, value })))}
+    </div>
+
+    <div class="analytics-bars">
+      <div class="analytics-bars-title">популярность тегов</div>
+      ${renderAnalyticsBars(Object.entries(tagCounts).map(([label, value]) => ({ label, value })))}
+    </div>
+  `;
+
+  document.getElementById("analytics-period")?.addEventListener("change", renderAnalytics);
+}
+
+function renderAnalyticsBars(data) {
+  const max = Math.max(1, ...data.map(d => d.value));
+  return data.map(({ label, value }) => `
+    <div class="bar-row">
+      <span class="bar-label">${escapeHtml(label)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(value / max) * 100}%"></div></div>
+      <span class="bar-value">${value}</span>
+    </div>
+  `).join("") || '<div class="empty-state">нет данных</div>';
+}
+
+// === НАСТРОЙКИ ===
+document.getElementById("settings-btn").addEventListener("click", () => {
+  const currentTheme = document.documentElement.dataset.theme || "light";
+  const u = state.currentUser;
+  const stats = computeAnalytics();
+
+  openModal({
+    title: "настройки",
+    wide: true,
+    bodyHtml: `
+      <div class="settings-block">
+        <h3 class="settings-block-title">профиль</h3>
+        <label class="field"><span class="field-label">имя</span><input class="field-input" id="s-name" value="${escapeHtml(u.name || "")}" /></label>
+        <label class="field"><span class="field-label">телефон</span><input class="field-input" id="s-phone" value="${escapeHtml(u.phone || "")}" placeholder="7 999 999-99-99" /></label>
+        <label class="field"><span class="field-label">email</span><input class="field-input" value="${escapeHtml(u.email || "")}" disabled /></label>
+        <label class="field"><span class="field-label">новый пароль (необязательно, мин. 6 символов)</span><input type="password" class="field-input" id="s-password" /></label>
+        <button class="btn btn-secondary" id="s-save-profile">сохранить профиль</button>
+      </div>
+
+      <div class="settings-block">
+        <h3 class="settings-block-title">внешний вид</h3>
+        <label class="field"><span class="field-label">тема</span>
+          <select class="select" id="theme-select">
+            <option value="light" ${currentTheme === "light" ? "selected" : ""}>светлая</option>
+            <option value="dark" ${currentTheme === "dark" ? "selected" : ""}>тёмная</option>
+          </select>
+        </label>
+      </div>
+
+      ${u.role === "admin" ? `
+      <div class="settings-block">
+        <h3 class="settings-block-title">аналитика</h3>
+        <div class="analytics-grid">
+          <div class="analytics-card"><div class="analytics-num">${stats.totalCandidates}</div><div class="analytics-label">всего кандидатов</div></div>
+          <div class="analytics-card"><div class="analytics-num">${stats.activeVacancies}</div><div class="analytics-label">активных вакансий</div></div>
+          <div class="analytics-card"><div class="analytics-num">${stats.hired}</div><div class="analytics-label">трудоустроено</div></div>
+          <div class="analytics-card"><div class="analytics-num">${stats.archived}</div><div class="analytics-label">архивных кандидатов</div></div>
+          <div class="analytics-card"><div class="analytics-num">${stats.interviewsToday}</div><div class="analytics-label">собеседований сегодня</div></div>
+          <div class="analytics-card"><div class="analytics-num">${stats.conversionRate || 0}%</div><div class="analytics-label">конверсия</div></div>
+        </div>
+        <div class="analytics-bars">
+          <div class="analytics-bars-title">кандидаты по источникам</div>
+          ${renderBarChart(stats.bySource)}
+        </div>
+        <div class="analytics-bars">
+          <div class="analytics-bars-title">кандидаты по этапам</div>
+          ${renderBarChart(stats.byStage)}
+        </div>
+      </div>
+
+      <div class="settings-block">
+        <h3 class="settings-block-title">резервное копирование</h3>
+        <div class="section-actions">
+          <button class="btn btn-secondary" id="s-export">экспортировать базу</button>
+          <label class="btn btn-secondary" for="s-import-input" style="cursor:pointer;">импортировать базу</label>
+          <input type="file" id="s-import-input" accept="application/json" hidden />
+        </div>
+      </div>
+      ` : ""}
+    `,
+    onMount: (overlay) => {
+      overlay.querySelectorAll(".field-input, .select").forEach((el) => {
+        el.style.cssText = "height:38px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;";
       });
-      chipsWrap.appendChild(el("button", { class: "tag-add-btn", type: "button", onclick: () => openTagPicker() }, "+ Добавить тег"));
-    }
-    function openTagPicker() {
-      const pop = el("div", { class: "dd-popover", style: "position:static;margin-top:8px;width:100%" });
-      Object.entries(state.tags || {}).forEach(([tid, tag]) => {
-        pop.appendChild(el("div", { class: "dd-option", onclick: () => { draft.tags[tid] = true; drawChips(); pop.remove(); } }, [
-          el("span", { style: `width:8px;height:8px;border-radius:50%;background:${tag.color};display:inline-block` }), " " + tag.name,
-        ]));
+
+      overlay.querySelector("#theme-select").addEventListener("change", (e) => {
+        document.documentElement.dataset.theme = e.target.value;
+        localStorage.setItem("demcrm-theme", e.target.value);
       });
-      pop.appendChild(el("div", { class: "dd-option", style: "color:var(--accent)", onclick: () => { pop.remove(); openTagManageModal(); } }, "Управление тегами…"));
-      wrap.appendChild(pop);
-    }
-    drawChips();
-    wrap.appendChild(el("div", { class: "field" }, [el("label", {}, "Теги кандидата"), chipsWrap]));
-    return wrap;
-  }
 
-  function tabHistory() {
-    const wrap = el("div", {});
-    const logs = state.activityLogs?.[candidateId];
-    if (!logs || Object.keys(logs).length === 0) {
-      wrap.appendChild(el("div", { class: "text-secondary" }, "Изменений пока нет."));
-      return wrap;
-    }
-    Object.values(logs).sort((a, b) => b.date - a.date).forEach(log => {
-      wrap.appendChild(el("div", { class: "history-item" }, [
-        el("span", { class: "history-date" }, fmtDateTime(log.date)),
-        el("span", {}, log.action),
-      ]));
-    });
-    return wrap;
-  }
-
-  renderBody();
-
-  if (isEdit) {
-    footer.appendChild(el("button", { class: "btn btn-danger", onclick: async () => {
-      const ok = await confirmModal({ title: "Удалить кандидата?", message: "Действие необратимо.", confirmLabel: "Удалить", danger: true });
-      if (ok) { await removePath(`candidates/${candidateId}`); toast("Кандидат удалён", "success"); closeModal(overlay); }
-    } }, "Удалить"));
-    footer.appendChild(el("button", { class: "btn btn-secondary", onclick: async () => {
-      await updatePath(`candidates/${candidateId}`, { archived: !draft.archived, archivedAt: !draft.archived ? Date.now() : null });
-      await logHistory(candidateId, draft.archived ? "Восстановлен из архива" : "Архивирован");
-      toast(draft.archived ? "Кандидат восстановлен" : "Кандидат архивирован", "success");
-      closeModal(overlay);
-    } }, draft.archived ? "Восстановить" : "Архивировать"));
-  }
-  footer.appendChild(el("div", { class: "topbar-spacer" }));
-  footer.appendChild(el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Отмена"));
-  footer.appendChild(el("button", { class: "btn btn-primary", onclick: async () => {
-    if (!draft.fio || !draft.fio.trim()) { toast("Укажите ФИО кандидата", "error"); return; }
-    if (!isValidPhone(draft.phone)) { toast("Некорректный номер телефона", "error"); return; }
-    if (!draft.vacancyId) { toast("Выберите вакансию", "error"); return; }
-
-    if (!isEdit) {
-      const dup = Object.entries(state.candidates || {}).find(([id, cc]) => cc.fio === draft.fio.trim() && cc.phone === draft.phone);
-      if (dup) { toast("Кандидат уже существует, открываю карточку", "warning"); closeModal(overlay); openCandidateModal(dup[0]); return; }
-      const payload = { ...draft, fio: draft.fio.trim(), createdAt: Date.now(), stageChangedAt: Date.now() };
-      const newId = await pushPath("candidates", payload);
-      await logHistory(newId, "Кандидат создан");
-      toast("Кандидат добавлен", "success");
-      closeModal(overlay);
-      return;
-    }
-
-    const stageChanged = draft.stage !== c.stage;
-    const payload = { ...draft, fio: draft.fio.trim() };
-    if (stageChanged) payload.stageChangedAt = Date.now();
-    if (draft.noShowCount && draft.noShowCount >= 3 && draft.noShowCount !== (c.noShowCount || 0)) {
-      let tagId = Object.entries(state.tags || {}).find(([tid, t]) => t.name === "Чёрный список")?.[0];
-      if (!tagId) tagId = await pushPath("tags", { name: "Чёрный список", color: "#e5484d" });
-      payload.tags = { ...(payload.tags || {}), [tagId]: true };
-    }
-    await updatePath(`candidates/${candidateId}`, payload);
-    if (stageChanged) await logHistory(candidateId, `Этап изменён на «${STAGES.find(s => s.key === draft.stage)?.label}»`);
-    else await logHistory(candidateId, "Данные карточки изменены");
-    toast("Сохранено", "success");
-    closeModal(overlay);
-  } }, "Сохранить"));
-
-  const overlay = openModal(content, { wide: true });
-}
-
-function openTagManageModal() {
-  const content = el("div", {});
-  const list = el("div", { style: "display:flex;flex-direction:column;gap:8px" });
-  function draw() {
-    list.innerHTML = "";
-    Object.entries(state.tags || {}).forEach(([id, tag]) => {
-      const nameInput = el("input", { value: tag.name, style: "flex:1" });
-      const colorDots = el("div", { style: "display:flex;gap:4px" }, TAG_COLORS.map(c => {
-        const dot = el("span", { style: `width:18px;height:18px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${c === tag.color ? "var(--text-main)" : "transparent"}` });
-        dot.addEventListener("click", async () => { await updatePath(`tags/${id}`, { color: c }); draw(); });
-        return dot;
-      }));
-      const row = el("div", { style: "display:flex;align-items:center;gap:8px" }, [
-        nameInput, colorDots,
-        el("button", { class: "btn-icon", onclick: async () => { await updatePath(`tags/${id}`, { name: nameInput.value }); toast("Тег обновлён", "success"); } }, "💾"),
-        el("button", { class: "btn-icon", onclick: async () => {
-          const ok = await confirmModal({ title: "Удалить тег?", message: `Тег «${tag.name}» будет удалён у всех кандидатов.`, danger: true, confirmLabel: "Удалить" });
-          if (ok) { await removePath(`tags/${id}`); draw(); }
-        } }, "🗑"),
-      ]);
-      list.appendChild(row);
-    });
-  }
-  draw();
-  const newTagName = el("input", { placeholder: "Название нового тега" });
-  content.append(
-    el("div", { class: "modal-head" }, [el("h3", {}, "Управление тегами"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    el("div", { class: "modal-body" }, [list, el("div", { class: "field" }, [el("label", {}, "Новый тег"), newTagName])]),
-    el("div", { class: "modal-footer" }, [
-      el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Закрыть"),
-      el("button", { class: "btn btn-primary", onclick: async () => {
-        if (!newTagName.value.trim()) return;
-        await pushPath("tags", { name: newTagName.value.trim(), color: TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)] });
-        newTagName.value = ""; draw();
-      } }, "+ Добавить"),
-    ])
-  );
-  const overlay = openModal(content);
-}
-
-// ---------------------------------------------------------
-// БАЗА КАНДИДАТОВ
-// ---------------------------------------------------------
-function renderCandidatesView(topbar, workspace) {
-  topbar.appendChild(el("div", { class: "topbar-title" }, "База кандидатов"));
-  topbar.appendChild(el("div", { class: "topbar-spacer" }));
-  topbar.appendChild(el("button", { class: "btn btn-secondary", onclick: () => importCandidatesFlow() }, "Импорт"));
-  topbar.appendChild(el("button", { class: "btn btn-secondary", onclick: () => exportCandidatesCsv() }, "Экспорт"));
-  topbar.appendChild(el("button", { class: "btn btn-primary", onclick: () => openCandidateModal(null) }, "+ Добавить кандидата"));
-
-  const f = state.candidatesFilters;
-  const searchInput = el("input", { placeholder: "Поиск по ФИО, телефону, вакансии…", value: f.search });
-  searchInput.addEventListener("input", debounce(() => { f.search = searchInput.value; drawTable(); }, 200));
-
-  const vacancyDD = buildDropdown({
-    options: Object.entries(state.vacancies || {}).map(([id, v]) => ({ value: id, label: v.title })),
-    value: f.vacancy, placeholder: "Вакансия", onChange: (v) => { f.vacancy = v; drawTable(); },
-  });
-  const stageDD = buildDropdown({
-    options: STAGES.map(s => ({ value: s.key, label: s.label })), value: f.stage, placeholder: "Этап", searchable: false,
-    onChange: (v) => { f.stage = v; drawTable(); },
-  });
-  const sourceDD = buildDropdown({
-    options: SOURCES.map(s => ({ value: s, label: s })), value: f.source, placeholder: "Источник", searchable: false,
-    onChange: (v) => { f.source = v; drawTable(); },
-  });
-  const tagDD = buildDropdown({
-    options: Object.entries(state.tags || {}).map(([id, t]) => ({ value: id, label: t.name })),
-    value: f.tag, placeholder: "Тег", onChange: (v) => { f.tag = v; drawTable(); },
-  });
-
-  const filtersRow = el("div", { class: "filters-row" }, [searchInput, vacancyDD, stageDD, sourceDD, tagDD]);
-  workspace.appendChild(filtersRow);
-
-  const tableWrap = el("div", { class: "table-wrap" });
-  workspace.appendChild(tableWrap);
-
-  function candStatusLabel(c) {
-    if (c.archived) return "Архив";
-    if (c.stage === "employment") return "Трудоустроен";
-    return "Активен";
-  }
-
-  function getFiltered() {
-    return Object.entries(state.candidates || {}).filter(([id, c]) => {
-      if (f.vacancy && c.vacancyId !== f.vacancy) return false;
-      if (f.stage && c.stage !== f.stage) return false;
-      if (f.source && c.source !== f.source) return false;
-      if (f.tag && !(c.tags && c.tags[f.tag])) return false;
-      if (f.search) {
-        const q = f.search.toLowerCase();
-        const vac = state.vacancies?.[c.vacancyId];
-        const hay = `${c.fio} ${c.phone} ${vac ? vac.title : ""}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }
-
-  function drawTable() {
-    tableWrap.innerHTML = "";
-    let items = getFiltered();
-    const { field, dir } = state.candidatesSort;
-    items.sort((a, b) => {
-      let av = a[1][field], bv = b[1][field];
-      if (field === "vacancy") { av = state.vacancies?.[a[1].vacancyId]?.title || ""; bv = state.vacancies?.[b[1].vacancyId]?.title || ""; }
-      if (typeof av === "string") av = av.toLowerCase();
-      if (typeof bv === "string") bv = bv.toLowerCase();
-      if (av === undefined) av = "";
-      if (bv === undefined) bv = "";
-      if (av < bv) return dir === "asc" ? -1 : 1;
-      if (av > bv) return dir === "asc" ? 1 : -1;
-      return 0;
-    });
-
-    if (items.length === 0) { tableWrap.appendChild(emptyState("Кандидаты не найдены.")); return; }
-
-    const columns = [
-      { key: "fio", label: "ФИО" }, { key: "phone", label: "Телефон" }, { key: "vacancy", label: "Вакансия" },
-      { key: "stage", label: "Этап" }, { key: "source", label: "Источник" }, { key: "createdAt", label: "Дата создания" },
-      { key: "tagsCol", label: "Теги" }, { key: "statusCol", label: "Статус" },
-    ];
-    const table = el("table", { class: "data-table" });
-    const thead = el("thead", {}, [el("tr", {}, columns.map(col => {
-      const th = el("th", { onclick: () => {
-        if (["tagsCol", "statusCol"].includes(col.key)) return;
-        const sortField = col.key === "vacancy" ? "vacancy" : col.key;
-        if (state.candidatesSort.field === sortField) state.candidatesSort.dir = state.candidatesSort.dir === "asc" ? "desc" : "asc";
-        else state.candidatesSort = { field: sortField, dir: "asc" };
-        drawTable();
-      } }, col.label + (state.candidatesSort.field === col.key ? (state.candidatesSort.dir === "asc" ? " ↑" : " ↓") : ""));
-      return th;
-    }))]);
-    const tbody = el("tbody");
-    items.forEach(([id, c]) => {
-      const vac = state.vacancies?.[c.vacancyId];
-      const stageLabel = STAGES.find(s => s.key === c.stage)?.label || c.stage;
-      const tr = el("tr", { onclick: () => openCandidateModal(id) }, [
-        el("td", {}, c.fio),
-        el("td", {}, c.phone),
-        el("td", {}, vac ? vac.title : "—"),
-        el("td", {}, stageLabel),
-        el("td", {}, c.source || "—"),
-        el("td", {}, fmtDate(c.createdAt)),
-        el("td", {}, Object.keys(c.tags || {}).map(tid => state.tags?.[tid]?.name).filter(Boolean).join(", ") || "—"),
-        el("td", {}, candStatusLabel(c)),
-      ]);
-      tbody.appendChild(tr);
-    });
-    table.append(thead, tbody);
-    tableWrap.appendChild(table);
-  }
-  drawTable();
-}
-
-function exportCandidatesCsv() {
-  const rows = [["ФИО", "Телефон", "Вакансия", "Этап", "Источник", "Дата создания", "Теги", "Статус"]];
-  Object.values(state.candidates || {}).forEach(c => {
-    const vac = state.vacancies?.[c.vacancyId];
-    const stageLabel = STAGES.find(s => s.key === c.stage)?.label || c.stage;
-    rows.push([
-      c.fio, c.phone, vac ? vac.title : "", stageLabel, c.source || "",
-      fmtDate(c.createdAt), Object.keys(c.tags || {}).map(tid => state.tags?.[tid]?.name).filter(Boolean).join("; "),
-      c.archived ? "Архив" : (c.stage === "employment" ? "Трудоустроен" : "Активен"),
-    ]);
-  });
-  const csv = rows.map(r => r.map(v => `"${(v || "").toString().replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = el("a", { href: url, download: `candidates_${todayStr()}.csv` });
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  toast("Экспорт завершён", "success");
-}
-
-function importCandidatesFlow() {
-  const fileInput = el("input", { type: "file", accept: ".csv,.xlsx" });
-  const pasteArea = el("textarea", { placeholder: "Вставьте данные из Excel сюда (Ctrl+V)…", style: "min-height:120px" });
-
-  const content = el("div", {});
-  content.append(
-    el("div", { class: "modal-head" }, [el("h3", {}, "Импорт кандидатов"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    el("div", { class: "modal-body" }, [
-      el("div", { class: "field" }, [el("label", {}, "Файл CSV"), fileInput]),
-      el("div", { class: "text-secondary", style: "font-size:12px" }, "Ожидаемый порядок столбцов: ФИО, Телефон, Вакансия, Источник. Формат .xlsx как бинарный excel без сторонних библиотек не поддерживается — сохраните файл как CSV, либо вставьте данные из буфера ниже."),
-      el("div", { class: "field" }, [el("label", {}, "Или вставьте из буфера обмена"), pasteArea]),
-    ]),
-    el("div", { class: "modal-footer" }, [
-      el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Отмена"),
-      el("button", { class: "btn btn-primary", onclick: async () => {
-        let rows = [];
-        if (fileInput.files[0]) {
-          const text = await fileInput.files[0].text();
-          rows = text.split(/\r?\n/).filter(Boolean).map(line => line.split(",").map(v => v.replace(/^"|"$/g, "").trim()));
-        } else if (pasteArea.value.trim()) {
-          rows = pasteArea.value.trim().split(/\r?\n/).map(line => line.split("\t").map(v => v.trim()));
-        }
-        if (rows.length === 0) { toast("Нет данных для импорта", "error"); return; }
-        await runImport(rows);
-        closeModal(overlay);
-      } }, "Импортировать"),
-    ])
-  );
-  const overlay = openModal(content);
-}
-
-async function runImport(rows) {
-  let added = 0, updated = 0, skipped = 0;
-  for (const row of rows) {
-    const [fio, phoneRaw, vacancyTitle, source] = row;
-    if (!fio || !phoneRaw) { skipped++; continue; }
-    const phone = maskPhone(phoneRaw);
-    const existing = Object.entries(state.candidates || {}).find(([id, c]) => c.fio === fio && c.phone === phone);
-    const vacancyEntry = Object.entries(state.vacancies || {}).find(([id, v]) => v.title === vacancyTitle);
-    if (existing) {
-      await updatePath(`candidates/${existing[0]}`, { source: source || existing[1].source });
-      updated++;
-      continue;
-    }
-    await pushPath("candidates", {
-      fio, phone, vacancyId: vacancyEntry ? vacancyEntry[0] : "", source: source || "Прочее",
-      stage: "response", createdAt: Date.now(), stageChangedAt: Date.now(), tags: {}, recruiterId: state.user.uid, onKanban: true,
-    });
-    added++;
-  }
-  toast(`Импорт завершён: добавлено ${added}, обновлено ${updated}, пропущено ${skipped}`, "success");
-}
-
-// ---------------------------------------------------------
-// АНАЛИТИКА
-// ---------------------------------------------------------
-function renderAnalyticsView(topbar, workspace) {
-  topbar.appendChild(el("div", { class: "topbar-title" }, "Аналитика"));
-  topbar.appendChild(el("div", { class: "topbar-spacer" }));
-  const periodDD = buildDropdown({
-    options: [{ value: "day", label: "День" }, { value: "week", label: "Неделя" }, { value: "month", label: "Месяц" }, { value: "year", label: "Год" }],
-    value: state.analyticsPeriod, allowEmpty: false, searchable: false,
-    onChange: (v) => { state.analyticsPeriod = v; renderCurrentView(); },
-  });
-  topbar.appendChild(periodDD);
-
-  const periodMs = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5, year: 365 * 864e5 }[state.analyticsPeriod];
-  const since = Date.now() - periodMs;
-  const allCands = Object.values(state.candidates || {});
-  const periodCands = allCands.filter(c => (c.createdAt || 0) >= since);
-
-  const metrics = [
-    { label: "Всего кандидатов", value: allCands.length },
-    { label: "Активных вакансий", value: Object.values(state.vacancies || {}).filter(v => v.status === "open").length },
-    { label: "Трудоустроено", value: allCands.filter(c => c.stage === "employment").length },
-    { label: "Архивных кандидатов", value: allCands.filter(c => c.archived).length },
-    { label: "Собеседований сегодня", value: allCands.filter(c => c.interviewDate === todayStr()).length },
-  ];
-  const grid = el("div", { class: "grid grid-metrics" }, metrics.map(m => el("div", { class: "card metric-card" }, [
-    el("div", { class: "metric-value" }, String(m.value)), el("div", { class: "metric-label" }, m.label),
-  ])));
-  workspace.appendChild(grid);
-
-  const secondaryMetrics = [
-    { label: "Откликов", value: periodCands.length },
-    { label: "Приглашений", value: periodCands.filter(c => ["invited", "form", "interview", "selected", "director", "employment"].includes(c.stage)).length },
-    { label: "Собеседований проведено", value: periodCands.filter(c => ["selected", "director", "employment"].includes(c.stage)).length },
-    { label: "Отказов", value: allCands.filter(c => Object.keys(c.tags || {}).some(tid => state.tags?.[tid]?.name === "Не вышел на связь")).length },
-    { label: "В работе", value: allCands.filter(c => !c.archived && c.stage !== "employment").length },
-  ];
-  const grid2 = el("div", { class: "grid grid-metrics", style: "margin-top:14px" }, secondaryMetrics.map(m => el("div", { class: "card metric-card" }, [
-    el("div", { class: "metric-value" }, String(m.value)), el("div", { class: "metric-label" }, m.label),
-  ])));
-  workspace.appendChild(grid2);
-
-  // конверсия по этапам
-  const funnelCard = el("div", { class: "card", style: "margin-top:18px" }, [el("h4", { style: "margin:0 0 8px" }, "Конверсия между этапами")]);
-  const total = allCands.length || 1;
-  STAGES.forEach((stage, i) => {
-    const count = allCands.filter(c => STAGES.findIndex(s => s.key === c.stage) >= i).length;
-    const pct = Math.round((count / total) * 100);
-    funnelCard.appendChild(el("div", { class: "funnel-row" }, [
-      el("span", { class: "funnel-label" }, stage.label),
-      el("span", { class: "funnel-bar-bg" }, [el("span", { class: "funnel-bar-fill", style: `width:${pct}%` })]),
-      el("span", { class: "funnel-pct" }, `${count} · ${pct}%`),
-    ]));
-  });
-  workspace.appendChild(funnelCard);
-
-  // графики
-  const chartsRow = el("div", { class: "charts-row" });
-  chartsRow.appendChild(barChartCard("По источникам", groupCount(allCands, "source")));
-  chartsRow.appendChild(barChartCard("По этапам", groupCount(allCands, c => STAGES.find(s => s.key === c.stage)?.label || c.stage)));
-  workspace.appendChild(chartsRow);
-
-  const chartsRow2 = el("div", { class: "charts-row" });
-  chartsRow2.appendChild(lineChartCard("Трудоустройства по месяцам", monthlySeries(allCands.filter(c => c.employmentDate), "employmentDate")));
-  chartsRow2.appendChild(lineChartCard("Динамика количества кандидатов", monthlySeries(allCands, "createdAt")));
-  workspace.appendChild(chartsRow2);
-}
-
-function groupCount(items, keyFn) {
-  const map = {};
-  items.forEach(i => { const k = typeof keyFn === "function" ? keyFn(i) : (i[keyFn] || "—"); map[k] = (map[k] || 0) + 1; });
-  return map;
-}
-function monthlySeries(items, dateField) {
-  const map = {};
-  items.forEach(i => {
-    const d = new Date(i[dateField]);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    map[key] = (map[key] || 0) + 1;
-  });
-  return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).slice(-6);
-}
-function barChartCard(title, dataMap) {
-  const entries = Object.entries(dataMap);
-  const max = Math.max(1, ...entries.map(([, v]) => v));
-  const w = 260, h = 140, barW = entries.length ? Math.min(40, (w - 20) / entries.length - 8) : 20;
-  let svg = `<svg width="${w}" height="${h + 24}" viewBox="0 0 ${w} ${h + 24}">`;
-  entries.forEach(([k, v], i) => {
-    const barH = (v / max) * h;
-    const x = i * (w / entries.length) + 8;
-    svg += `<rect x="${x}" y="${h - barH}" width="${barW}" height="${barH}" rx="4" fill="var(--accent)" style="fill:#4f6dfa" />`;
-    svg += `<text x="${x + barW / 2}" y="${h + 14}" font-size="9" text-anchor="middle" fill="#85888e">${escapeHtml(String(k).slice(0, 8))}</text>`;
-    svg += `<text x="${x + barW / 2}" y="${h - barH - 4}" font-size="9" text-anchor="middle" fill="#85888e">${v}</text>`;
-  });
-  svg += `</svg>`;
-  if (entries.length === 0) return el("div", { class: "card chart-card" }, [el("h4", {}, title), el("div", { class: "text-secondary" }, "Нет данных")]);
-  return el("div", { class: "card chart-card" }, [el("h4", {}, title), el("div", { html: svg })]);
-}
-function lineChartCard(title, entries) {
-  if (entries.length === 0) return el("div", { class: "card chart-card" }, [el("h4", {}, title), el("div", { class: "text-secondary" }, "Нет данных")]);
-  const w = 260, h = 140;
-  const max = Math.max(1, ...entries.map(([, v]) => v));
-  const step = w / Math.max(1, entries.length - 1);
-  const points = entries.map(([, v], i) => `${i * step},${h - (v / max) * h}`).join(" ");
-  let svg = `<svg width="${w}" height="${h + 24}" viewBox="0 0 ${w} ${h + 24}">`;
-  svg += `<polyline points="${points}" fill="none" stroke="#4f6dfa" stroke-width="2" />`;
-  entries.forEach(([k, v], i) => {
-    const x = i * step, y = h - (v / max) * h;
-    svg += `<circle cx="${x}" cy="${y}" r="3" fill="#4f6dfa" />`;
-    svg += `<text x="${x}" y="${h + 14}" font-size="9" text-anchor="middle" fill="#85888e">${k.slice(5)}</text>`;
-  });
-  svg += `</svg>`;
-  return el("div", { class: "card chart-card" }, [el("h4", {}, title), el("div", { html: svg })]);
-}
-
-// ---------------------------------------------------------
-// ПОЛЬЗОВАТЕЛИ (только админ)
-// ---------------------------------------------------------
-function renderUsersView(topbar, workspace) {
-  if (state.profile.role !== "admin") { workspace.appendChild(emptyState("Доступ только для администраторов.")); return; }
-  topbar.appendChild(el("div", { class: "topbar-title" }, "Пользователи"));
-  topbar.appendChild(el("div", { class: "topbar-spacer" }));
-  topbar.appendChild(el("button", { class: "btn btn-primary", onclick: () => openUserModal(null) }, "+ Добавить пользователя"));
-
-  const tableWrap = el("div", { class: "table-wrap" });
-  const entries = Object.entries(state.users || {});
-  if (entries.length === 0) { tableWrap.appendChild(emptyState("Пользователей нет.")); }
-  else {
-    const table = el("table", { class: "data-table" });
-    table.appendChild(el("thead", {}, [el("tr", {}, [el("th", {}, "Имя"), el("th", {}, "Email"), el("th", {}, "Роль"), el("th", {}, "")])]));
-    const tbody = el("tbody");
-    entries.forEach(([uid, u]) => {
-      tbody.appendChild(el("tr", {}, [
-        el("td", {}, u.name || "—"),
-        el("td", {}, u.email || "—"),
-        el("td", {}, u.role === "admin" ? "Администратор" : "Рекрутер"),
-        el("td", {}, [
-          el("button", { class: "btn btn-secondary", onclick: (e) => { e.stopPropagation(); openUserModal(uid); } }, "Изменить"),
-        ]),
-      ]));
-    });
-    table.appendChild(tbody);
-    tableWrap.appendChild(table);
-  }
-  workspace.appendChild(tableWrap);
-}
-
-function openUserModal(uid) {
-  const isEdit = !!uid;
-  const u = isEdit ? state.users[uid] : { name: "", email: "", role: "recruiter" };
-  const nameInput = el("input", { value: u.name || "" });
-  const emailInput = el("input", { value: u.email || "", disabled: isEdit ? "true" : undefined });
-  const passInput = el("input", { type: "password", placeholder: isEdit ? "Оставить пустым, если не менять" : "Пароль" });
-  const roleDD = buildDropdown({
-    options: [{ value: "admin", label: "Администратор" }, { value: "recruiter", label: "Рекрутер" }],
-    value: u.role, allowEmpty: false, searchable: false, onChange: () => {},
-  });
-
-  const content = el("div", {});
-  content.append(
-    el("div", { class: "modal-head" }, [el("h3", {}, isEdit ? "Редактирование пользователя" : "Новый пользователь"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    el("div", { class: "modal-body" }, [
-      el("div", { class: "field" }, [el("label", {}, "Имя"), nameInput]),
-      el("div", { class: "field" }, [el("label", {}, "Email"), emailInput]),
-      !isEdit ? el("div", { class: "field" }, [el("label", {}, "Пароль"), passInput]) : null,
-      el("div", { class: "field" }, [el("label", {}, "Роль"), roleDD]),
-      isEdit ? el("div", { class: "text-secondary", style: "font-size:12px" }, "Смена пароля другого пользователя недоступна на бесплатном тарифе Firebase — попросите его сменить пароль самостоятельно через настройки.") : null,
-    ]),
-    el("div", { class: "modal-footer" }, [
-      isEdit ? el("button", { class: "btn btn-danger", onclick: async () => {
-        const ok = await confirmModal({ title: "Удалить пользователя?", message: "Кандидаты, закреплённые за ним, станут незакреплёнными.", danger: true, confirmLabel: "Удалить" });
-        if (ok) {
-          const toUnassign = Object.entries(state.candidates || {}).filter(([id, c]) => c.recruiterId === uid);
-          for (const [id] of toUnassign) await updatePath(`candidates/${id}`, { recruiterId: "" });
-          await removePath(`users/${uid}`);
-          toast("Пользователь удалён", "success");
-          closeModal(overlay);
-        }
-      } }, "Удалить") : null,
-      el("div", { class: "topbar-spacer" }),
-      el("button", { class: "btn btn-secondary", onclick: () => closeModal(overlay) }, "Отмена"),
-      el("button", { class: "btn btn-primary", onclick: async () => {
-        if (!nameInput.value.trim()) { toast("Укажите имя", "error"); return; }
-        if (!isEdit) {
-          if (!isValidEmail(emailInput.value)) { toast("Некорректный email", "error"); return; }
-          if (!passInput.value || passInput.value.length < 6) { toast("Пароль минимум 6 символов", "error"); return; }
-          try {
-            await createUserSecondary(emailInput.value.trim(), passInput.value, nameInput.value.trim(), roleDD.getValue());
-            toast("Пользователь создан", "success");
-            closeModal(overlay);
-          } catch (err) {
-            toast("Ошибка: " + (err.message || "не удалось создать"), "error");
-          }
-        } else {
-          await updatePath(`users/${uid}`, { name: nameInput.value.trim(), role: roleDD.getValue() });
-          toast("Пользователь обновлён", "success");
-          closeModal(overlay);
-        }
-      } }, "Сохранить"),
-    ])
-  );
-  const overlay = openModal(content);
-}
-
-// ---------------------------------------------------------
-// НАСТРОЙКИ
-// ---------------------------------------------------------
-function openSettingsModal() {
-  const nameInput = el("input", { value: state.profile?.name || "" });
-  const emailInput = el("input", { value: state.profile?.email || "", disabled: "true" });
-  const passInput = el("input", { type: "password", placeholder: "Новый пароль (необязательно)" });
-  const themeDD = buildDropdown({
-    options: [{ value: "light", label: "Светлая" }, { value: "dark", label: "Тёмная" }],
-    value: state.theme, allowEmpty: false, searchable: false,
-    onChange: (v) => { state.theme = v; localStorage.setItem("demcrm_theme", v); document.documentElement.setAttribute("data-theme", v); },
-  });
-
-  const content = el("div", {});
-  content.append(
-    el("div", { class: "modal-head" }, [el("h3", {}, "Настройки"), el("button", { class: "btn-icon", onclick: () => closeModal(overlay) }, "✕")]),
-    el("div", { class: "modal-body" }, [
-      el("div", { class: "field" }, [el("label", {}, "Имя"), nameInput]),
-      el("div", { class: "field" }, [el("label", {}, "Email"), emailInput]),
-      el("div", { class: "field" }, [el("label", {}, "Новый пароль"), passInput]),
-      el("div", { class: "field" }, [el("label", {}, "Тема оформления"), themeDD]),
-    ]),
-    el("div", { class: "modal-footer" }, [
-      el("button", { class: "btn btn-secondary", onclick: async () => { await logoutUser(); closeModal(overlay); } }, "Выйти"),
-      el("div", { class: "topbar-spacer" }),
-      el("button", { class: "btn btn-primary", onclick: async () => {
+      overlay.querySelector("#s-save-profile").addEventListener("click", async () => {
+        const name = overlay.querySelector("#s-name").value.trim();
+        const phone = overlay.querySelector("#s-phone").value.trim();
+        const newPassword = overlay.querySelector("#s-password").value;
         try {
-          if (nameInput.value.trim() && nameInput.value.trim() !== state.profile.name) {
-            await updateOwnProfile(nameInput.value.trim());
-            state.profile.name = nameInput.value.trim();
+          const updates = {};
+          if (name && name !== u.name) updates.name = name;
+          if (phone !== u.phone) updates.phone = phone;
+          if (Object.keys(updates).length > 0) {
+            await update(ref(db, `users/${u.uid}`), updates);
           }
-          if (passInput.value) {
-            if (passInput.value.length < 6) { toast("Пароль минимум 6 символов", "error"); return; }
-            await updateOwnPassword(passInput.value);
+          if (newPassword) {
+            if (newPassword.length < 6) { showToast("пароль должен быть от 6 символов", "error"); return; }
+            await updatePassword(auth.currentUser, newPassword);
           }
-          toast("Настройки сохранены", "success");
-          closeModal(overlay);
+          showToast("профиль обновлён");
         } catch (err) {
-          toast("Ошибка: " + (err.message || ""), "error");
+          showToast("не удалось обновить профиль. возможно, нужно перезайти в систему", "error");
         }
-      } }, "Сохранить"),
-    ])
-  );
-  const overlay = openModal(content);
+      });
+
+      const exportBtn = overlay.querySelector("#s-export");
+      if (exportBtn) exportBtn.addEventListener("click", exportDatabase);
+
+      const importInput = overlay.querySelector("#s-import-input");
+      if (importInput) importInput.addEventListener("change", async () => {
+        const file = importInput.files[0];
+        if (!file) return;
+        const ok = await confirmDialog("импорт полностью заменит текущие данные вакансий и кандидатов. продолжить?");
+        if (!ok) return;
+        await importDatabase(file);
+      });
+    },
+  });
+});
+
+function computeAnalytics() {
+  const candidates = Object.values(state.candidates);
+  const today = new Date().toISOString().slice(0, 10);
+  const bySource = {};
+  const byStage = {};
+  let hired = 0;
+  candidates.forEach((c) => {
+    bySource[c.source || "прочее"] = (bySource[c.source || "прочее"] || 0) + 1;
+    const stageLabel = KANBAN_STAGES.find((s) => s.id === c.stage)?.label || c.stage || "—";
+    byStage[stageLabel] = (byStage[stageLabel] || 0) + 1;
+    if (c.stage === "hired") hired++;
+  });
+
+  const total = candidates.length;
+  const conversionRate = total > 0 ? Math.round((hired / total) * 100) : 0;
+
+  return {
+    totalCandidates: total,
+    activeVacancies: Object.values(state.vacancies).filter((v) => v.status === "active").length,
+    hired,
+    archived: candidates.filter((c) => c.archived).length,
+    interviewsToday: candidates.filter((c) => c.interviewDate === today).length,
+    conversionRate,
+    bySource,
+    byStage,
+  };
 }
 
-// ---------------------------------------------------------
-// ГЛОБАЛЬНЫЙ ПОИСК (Ctrl+K)
-// ---------------------------------------------------------
-const gsOverlay = $("#globalSearchOverlay");
-const gsInput = $("#globalSearchInput");
-const gsResults = $("#globalSearchResults");
+function renderBarChart(dataObj) {
+  const entries = Object.entries(dataObj);
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  return entries.map(([label, value]) => `
+    <div class="bar-row">
+      <span class="bar-label">${escapeHtml(label)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(value / max) * 100}%"></div></div>
+      <span class="bar-value">${value}</span>
+    </div>
+  `).join("") || '<div class="empty-state" style="padding:12px 0;">нет данных</div>';
+}
 
+function exportDatabase() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    vacancies: state.vacancies,
+    candidates: state.candidates,
+    users: Object.fromEntries(Object.entries(state.users).map(([uid, u]) => [uid, { name: u.name, email: u.email, phone: u.phone, role: u.role }])),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `demcrm-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  showToast("база экспортирована");
+}
+
+async function importDatabase(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.vacancies || !data.candidates) throw new Error("некорректный формат файла");
+
+    await update(ref(db), {
+      vacancies: data.vacancies,
+      candidates: data.candidates,
+    });
+    showToast("база импортирована");
+  } catch (err) {
+    showToast("не удалось импортировать файл. проверьте формат и попробуйте снова", "error");
+  }
+}
+
+// === ТЕМА ===
+const savedTheme = localStorage.getItem("demcrm-theme");
+if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+
+// === ГЛОБАЛЬНЫЙ ПОИСК ===
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
-    if (!state.user) return;
-    gsOverlay.classList.remove("hidden");
-    gsInput.value = "";
-    gsResults.innerHTML = "";
-    setTimeout(() => gsInput.focus(), 10);
-  } else if (e.key === "Escape") {
-    gsOverlay.classList.add("hidden");
+    openGlobalSearch();
   }
 });
-gsOverlay.addEventListener("click", (e) => { if (e.target === gsOverlay) gsOverlay.classList.add("hidden"); });
-gsInput?.addEventListener("input", () => {
-  const q = gsInput.value.toLowerCase().trim();
-  gsResults.innerHTML = "";
-  if (!q) return;
-  const results = [];
-  Object.entries(state.candidates || {}).forEach(([id, c]) => {
-    if (`${c.fio} ${c.phone}`.toLowerCase().includes(q)) results.push({ type: "Кандидат", label: c.fio, action: () => openCandidateModal(id) });
+
+function openGlobalSearch() {
+  openModal({
+    title: "глобальный поиск",
+    bodyHtml: `
+      <input type="text" id="gs-input" class="field-input" placeholder="кандидаты, вакансии..." style="height:40px;border:1px solid var(--border);border-radius:8px;padding:0 12px;background:var(--bg);color:var(--text);width:100%;" />
+      <div id="gs-results" class="gs-results"></div>
+    `,
+    onMount: (overlay) => {
+      const input = overlay.querySelector("#gs-input");
+      const results = overlay.querySelector("#gs-results");
+      input.focus();
+
+      input.addEventListener("input", () => {
+        const term = input.value.trim().toLowerCase();
+        results.innerHTML = "";
+        if (!term) return;
+
+        const vacancyMatches = Object.entries(state.vacancies).filter(([, v]) => (v.title || "").toLowerCase().includes(term));
+        const candidateMatches = Object.entries(state.candidates).filter(([, c]) => (c.name || "").toLowerCase().includes(term) || (c.phone || "").includes(term));
+
+        vacancyMatches.forEach(([id, v]) => {
+          const row = document.createElement("div");
+          row.className = "gs-result";
+          row.innerHTML = `<span class="tag tag-info">вакансия</span> ${escapeHtml(v.title)}`;
+          row.addEventListener("click", () => { document.getElementById("modal-root").innerHTML = ""; openKanban(id); });
+          results.appendChild(row);
+        });
+        candidateMatches.forEach(([id, c]) => {
+          const row = document.createElement("div");
+          row.className = "gs-result";
+          row.innerHTML = `<span class="tag tag-success">кандидат</span> ${escapeHtml(c.name)} · ${formatPhone(c.phone || "")}`;
+          row.addEventListener("click", () => { document.getElementById("modal-root").innerHTML = ""; switchSection("candidates"); openCandidateModal(id); });
+          results.appendChild(row);
+        });
+        if (!vacancyMatches.length && !candidateMatches.length) {
+          results.innerHTML = '<div class="empty-state" style="padding:16px 0;">ничего не найдено</div>';
+        }
+      });
+    },
   });
-  Object.entries(state.vacancies || {}).forEach(([id, v]) => {
-    if ((v.title || "").toLowerCase().includes(q)) results.push({ type: "Вакансия", label: v.title, action: () => { switchView("vacancies", { vacancyId: id }); } });
-  });
-  Object.entries(state.managers || {}).forEach(([id, m]) => {
-    if ((m.fio || "").toLowerCase().includes(q)) results.push({ type: "Руководитель", label: m.fio, action: () => {} });
-  });
-  results.slice(0, 20).forEach(r => {
-    const item = el("div", { class: "gs-item", onclick: () => { r.action(); gsOverlay.classList.add("hidden"); } }, [
-      el("span", {}, r.label), el("span", { class: "gs-item-type" }, r.type),
-    ]);
-    gsResults.appendChild(item);
-  });
-  if (results.length === 0) gsResults.appendChild(el("div", { class: "gs-item text-secondary" }, "Ничего не найдено"));
-});
+}
+
+// === СТАРТ ===
+ensureMainAdmin();
