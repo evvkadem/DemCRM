@@ -1,477 +1,185 @@
 <!DOCTYPE html>
 <html lang="ru" data-theme="light">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DemCRM</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<!-- ЭКРАН ВХОДА -->
-<div id="loginScreen" class="login-screen">
-  <form id="loginForm" class="login-card">
-    <div class="login-logo">DemCRM</div>
-    <p class="login-sub">recruiting workspace</p>
-    <div class="field">
-      <label for="loginEmail">Email</label>
-      <input type="email" id="loginEmail" autocomplete="username" required>
-    </div>
-    <div class="field">
-      <label for="loginPassword">Пароль</label>
-      <input type="password" id="loginPassword" autocomplete="current-password" required>
-    </div>
-    <label class="checkbox-row">
-      <input type="checkbox" id="loginRemember" checked>
-      <span>Запомнить меня</span>
-    </label>
-    <div id="loginError" class="login-error hidden"></div>
-    <button type="submit" class="btn btn-primary btn-block" id="loginSubmit">Войти</button>
-  </form>
-</div>
+  <!-- ==================== ЭКРАН ВХОДА ==================== -->
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card">
+      <div class="login-logo">DemCRM</div>
+      <p class="login-sub">вход в систему</p>
 
-<!-- ПРИЛОЖЕНИЕ -->
-<div id="app" class="app hidden">
+      <label class="field">
+        <span class="field-label">email</span>
+        <input type="email" id="login-email" required autocomplete="username" />
+      </label>
 
-  <aside class="sidebar">
-    <div class="sidebar-top">
-      <div class="app-logo">DemCRM</div>
-    </div>
+      <label class="field">
+        <span class="field-label">пароль</span>
+        <input type="password" id="login-password" required autocomplete="current-password" />
+      </label>
 
-    <nav class="sidebar-nav">
-      <button class="nav-item" data-view="vacancies">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
-        <span>Вакансии</span>
-      </button>
-      <button class="nav-item" data-view="candidates">
-        <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>
-        <span>База кандидатов</span>
-      </button>
-      <button class="nav-item" data-view="analytics">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M3 17h4l2-8 3 12 3-9 4 5h2"/></svg>
-        <span>Аналитика</span>
-      </button>
-      <button class="nav-item" data-view="archived">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v4H4zM5 9h14v11H5z"/><path d="M10 13h4"/></svg>
-        <span>Архив</span>
-      </button>
-      <button class="nav-item hidden" data-view="users" id="navUsers">
-        <svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="8.5" r="2.5"/><path d="M16 13.2c2.6.4 4.5 2 4.5 5.3"/></svg>
-        <span>Пользователи</span>
-      </button>
-    </nav>
+      <label class="checkbox-field">
+        <input type="checkbox" id="login-remember" checked />
+        <span>запомнить меня</span>
+      </label>
 
-    <div class="sidebar-bottom">
-      <div class="user-chip" id="userChip">
-        <div class="user-avatar" id="userAvatar">?</div>
-        <div class="user-chip-info">
-          <div class="user-chip-name" id="userChipName">—</div>
-          <div class="user-chip-role" id="userChipRole">—</div>
-        </div>
-      </div>
-      <button class="nav-item" id="openSettings">
-        <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1z"/></svg>
-        <span>Настройки</span>
-      </button>
-    </div>
-  </aside>
+      <div id="login-error" class="form-error" hidden></div>
 
-  <main class="main">
-
-    <header class="topbar">
-      <div class="search-box" id="topSearchBox">
-        <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="text" id="topSearchInput" placeholder="Поиск...">
-        <kbd class="kbd">Ctrl K</kbd>
-      </div>
-      <div class="topbar-actions" id="topbarActions"></div>
-    </header>
-
-    <!-- ВАКАНСИИ -->
-    <section class="view" id="view-vacancies" data-view="vacancies">
-      <div class="view-header">
-        <h1>Вакансии</h1>
-        <div class="view-controls">
-          <div class="filter-pills" id="vacancyStatusFilter">
-            <button class="pill active" data-status="all">Все</button>
-            <button class="pill" data-status="активна">Активные</button>
-            <button class="pill" data-status="приостановлена">Приостановленные</button>
-            <button class="pill" data-status="закрыта">Закрытые</button>
-          </div>
-          <div class="search-box search-box-inline">
-            <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <input type="text" id="vacancySearch" placeholder="Поиск вакансии...">
-          </div>
-          <button class="btn btn-primary" id="addVacancyBtn">+ Добавить вакансию</button>
-        </div>
-      </div>
-      <div class="vacancy-grid" id="vacancyGrid"></div>
-      <div class="empty-state hidden" id="vacancyEmpty">Вакансий пока нет — добавьте первую.</div>
-    </section>
-
-    <!-- KANBAN -->
-    <section class="view" id="view-kanban" data-view="kanban">
-      <div class="view-header">
-        <button class="btn-back" id="kanbanBack">← Вакансии</button>
-        <h1 id="kanbanTitle">Вакансия</h1>
-        <div class="view-controls">
-          <button class="btn btn-primary" id="addCandidateBtn">+ Добавить кандидата</button>
-        </div>
-      </div>
-      <div class="kanban-board" id="kanbanBoard"></div>
-    </section>
-
-    <!-- БАЗА КАНДИДАТОВ -->
-    <section class="view" id="view-candidates" data-view="candidates">
-      <div class="view-header">
-        <h1>База кандидатов</h1>
-        <div class="view-controls">
-          <div class="search-box search-box-inline">
-            <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <input type="text" id="candidatesSearch" placeholder="Имя, телефон, вакансия...">
-          </div>
-          <select class="select" id="filterVacancy"><option value="">Все вакансии</option></select>
-          <select class="select" id="filterStage"><option value="">Все этапы</option></select>
-          <select class="select" id="filterSource"><option value="">Все источники</option></select>
-          <button class="btn btn-secondary" id="exportCandidatesBtn">📤 Экспорт</button>
-          <button class="btn btn-secondary" id="importCandidatesBtn">📥 Импорт</button>
-          <input type="file" id="importCandidatesFile" accept=".json" class="hidden">
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table" id="candidatesTable">
-          <thead>
-            <tr>
-              <th>Имя</th><th>Телефон</th><th>Вакансия</th><th>Этап</th><th>Источник</th><th>Теги</th><th>Создан</th><th>Рекрутер</th>
-            </tr>
-          </thead>
-          <tbody id="candidatesTableBody"></tbody>
-        </table>
-        <div class="empty-state hidden" id="candidatesEmpty">Ничего не найдено.</div>
-      </div>
-    </section>
-
-    <!-- АРХИВ -->
-    <section class="view" id="view-archived" data-view="archived">
-      <div class="view-header">
-        <h1>Архив кандидатов</h1>
-        <div class="view-controls">
-          <span style="font-size:13px;color:var(--text-secondary);" id="archivedCount"></span>
-        </div>
-      </div>
-      <div id="archivedCandidatesList"></div>
-    </section>
-
-    <!-- АНАЛИТИКА -->
-    <section class="view" id="view-analytics" data-view="analytics">
-      <div class="view-header">
-        <h1>Аналитика</h1>
-        <div class="view-controls">
-          <div class="filter-pills" id="analyticsPeriodFilter">
-            <button class="pill active" data-period="day">День</button>
-            <button class="pill" data-period="week">Неделя</button>
-            <button class="pill" data-period="month">Месяц</button>
-            <button class="pill" data-period="year">Год</button>
-          </div>
-          <input type="date" id="analyticsDate" class="select">
-        </div>
-      </div>
-      <div class="analytics-dashboard">
-        <div class="analytics-grid" id="analyticsGrid"></div>
-        <div class="analytics-charts" id="analyticsCharts"></div>
-        <div class="analytics-conversion" id="analyticsConversion"></div>
-      </div>
-    </section>
-
-    <!-- ПОЛЬЗОВАТЕЛИ -->
-    <section class="view" id="view-users" data-view="users">
-      <div class="view-header">
-        <h1>Пользователи</h1>
-        <div class="view-controls">
-          <button class="btn btn-primary" id="addUserBtn">+ Создать пользователя</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table" id="usersTable">
-          <thead><tr><th>Имя</th><th>Email</th><th>Роль</th><th>Телефон</th><th></th></tr></thead>
-          <tbody id="usersTableBody"></tbody>
-        </table>
-      </div>
-    </section>
-
-  </main>
-</div>
-
-<!-- МОДАЛКА: добавить вакансию -->
-<div class="modal-overlay hidden" id="modalVacancy">
-  <div class="modal">
-    <div class="modal-header">
-      <h2 id="vacancyModalTitle">Новая вакансия</h2>
-      <button class="modal-close" data-close>&times;</button>
-    </div>
-    <div class="modal-body">
-      <form id="vacancyForm">
-        <input type="hidden" id="vacancyId">
-        <div class="field"><label>Название</label><input type="text" id="vTitle" required></div>
-        <div class="field">
-          <label>Руководитель</label>
-          <select id="vManager" required></select>
-        </div>
-        <div class="field"><label>Телефон руководителя</label><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99"></div>
-        <div class="field"><label>Описание</label><textarea id="vDescription" rows="3"></textarea></div>
-        <div class="field-row">
-          <div class="field"><label>Открытых мест</label><input type="number" id="vPositions" min="1" value="1" required></div>
-          <div class="field">
-            <label>Статус</label>
-            <select id="vStatus"><option value="активна">Активна</option><option value="приостановлена">Приостановлена</option><option value="закрыта">Закрыта</option></select>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Дата открытия</label><input type="date" id="vOpenDate"></div>
-          <div class="field"><label>Дата закрытия</label><input type="date" id="vCloseDate"></div>
-        </div>
-        <div class="field"><label>Комментарий</label><textarea id="vComment" rows="2"></textarea></div>
-      </form>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" data-close>Отмена</button>
-      <button class="btn btn-danger hidden" id="deleteVacancyBtn">Удалить</button>
-      <button class="btn btn-primary" id="saveVacancyBtn">Сохранить</button>
-    </div>
+      <button type="submit" class="btn btn-primary btn-block">войти</button>
+    </form>
   </div>
-</div>
 
-<!-- МОДАЛКА: добавить кандидата -->
-<div class="modal-overlay hidden" id="modalAddCandidate">
-  <div class="modal modal-sm">
-    <div class="modal-header"><h2>Новый кандидат</h2><button class="modal-close" data-close>&times;</button></div>
-    <div class="modal-body">
-      <form id="addCandidateForm">
-        <div class="field"><label>Имя</label><input type="text" id="cAddName" required></div>
-        <div class="field"><label>Телефон</label><input type="tel" id="cAddPhone" placeholder="7 999 999-99-99" required></div>
-        <div class="field">
-          <label>Источник</label>
-          <div class="custom-select" id="cAddSourceSelect">
-            <div class="custom-select-trigger" data-target="cAddSourceOptions">Прочее</div>
-            <div class="custom-select-options hidden" id="cAddSourceOptions">
-              <div class="custom-select-option" data-value="hh">hh</div>
-              <div class="custom-select-option" data-value="авито">Авито</div>
-              <div class="custom-select-option" data-value="прочее">Прочее</div>
+  <!-- ==================== ПРИЛОЖЕНИЕ ==================== -->
+  <div id="app" class="app" hidden>
+
+    <!-- боковая панель -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">DemCRM</div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-section="vacancies">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2-2h2l2 2h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+          <span>вакансии</span>
+        </button>
+        <button class="nav-item" data-section="candidates">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 19v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/></svg>
+          <span>база кандидатов</span>
+        </button>
+        <button class="nav-item" data-section="analytics" data-admin-only>
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16M7 15l4-5 3 3 5-7"/></svg>
+          <span>аналитика</span>
+        </button>
+        <button class="nav-item" data-section="users" data-admin-only>
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm10 9v-1a3.5 3.5 0 0 0-2.5-3.36M15 3.13a3.5 3.5 0 0 1 0 6.74"/></svg>
+          <span>пользователи</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button id="user-profile-btn" class="sidebar-user">
+          <span id="user-avatar" class="avatar-sm">?</span>
+          <span id="user-name" class="sidebar-user-name">—</span>
+        </button>
+        <button id="settings-btn" class="nav-item">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 1-.1 1.2l2 1.6-2 3.4-2.4-1a7.6 7.6 0 0 1-2 1.2l-.4 2.6H9.5l-.4-2.6a7.6 7.6 0 0 1-2-1.2l-2.4 1-2-3.4 2-1.6A7.4 7.4 0 0 1 4.6 12a7.4 7.4 0 0 1 .1-1.2l-2-1.6 2-3.4 2.4 1a7.6 7.6 0 0 1 2-1.2l.4-2.6h5l.4 2.6a7.6 7.6 0 0 1 2 1.2l2.4-1 2 3.4-2 1.6c.07.4.1.8.1 1.2Z"/></svg>
+          <span>настройки</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- основная область -->
+    <main class="main">
+
+      <!-- ---------- вакансии ---------- -->
+      <section id="section-vacancies" class="section active">
+        <header class="section-header">
+          <h1>вакансии</h1>
+          <div class="section-actions">
+            <div class="search-box">
+              <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" id="vacancy-search" placeholder="поиск вакансий..." />
             </div>
+            <div id="vacancy-filter-mount" class="csel-mount"></div>
+            <button id="add-vacancy-btn" class="btn btn-primary">+ добавить вакансию</button>
           </div>
-          <input type="hidden" id="cAddSource" value="прочее">
-        </div>
-        <div class="field">
-          <label>Теги</label>
-          <input type="text" id="cAddTags" placeholder="тег1, тег2, ...">
-        </div>
-      </form>
-      <div id="candidateExistsWarning" class="hidden" style="background:var(--warning-bg);padding:10px;border-radius:8px;margin-top:10px;color:var(--warning);">
-        ⚠️ Кандидат с таким именем или телефоном уже существует в базе. <a href="#" id="gotoExistingCandidate" style="color:var(--text);text-decoration:underline;">Перейти к карточке</a>
-      </div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" data-close>Отмена</button>
-      <button class="btn btn-primary" id="saveAddCandidateBtn">Добавить</button>
-    </div>
-  </div>
-</div>
+        </header>
 
-<!-- МОДАЛКА: полная карточка кандидата -->
-<div class="modal-overlay hidden" id="modalCandidate">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <h2 id="candidateModalName">Кандидат</h2>
-      <button class="modal-close" data-close>&times;</button>
-    </div>
-    <div class="modal-body candidate-modal-body">
-
-      <div class="cand-tags" id="candTags"></div>
-
-      <div class="cand-section">
-        <h3>Основные данные</h3>
-        <div class="field-row">
-          <div class="field"><label>ФИО</label><input type="text" id="candName"></div>
-          <div class="field"><label>Телефон</label><input type="tel" id="candPhone" placeholder="7 999 999-99-99"></div>
+        <div id="vacancies-grid" class="grid-cards">
+          <!-- карточки вакансий рендерятся js -->
         </div>
-        <div class="field-row">
-          <div class="field"><label>Вакансия</label>
-            <select id="candVacancy"></select>
+        <div id="vacancies-empty" class="empty-state" hidden>пока нет вакансий</div>
+      </section>
+
+      <!-- ---------- kanban конкретной вакансии ---------- -->
+      <section id="section-kanban" class="section">
+        <header class="section-header">
+          <button id="kanban-back" class="btn btn-ghost">← назад к вакансиям</button>
+          <h1 id="kanban-title">—</h1>
+          <div class="section-actions">
+            <button id="add-candidate-btn" class="btn btn-primary">+ добавить кандидата</button>
           </div>
-          <div class="field">
-            <label>Источник</label>
-            <div class="custom-select" id="candSourceSelect">
-              <div class="custom-select-trigger" data-target="candSourceOptions">Прочее</div>
-              <div class="custom-select-options hidden" id="candSourceOptions">
-                <div class="custom-select-option" data-value="hh">hh</div>
-                <div class="custom-select-option" data-value="авито">Авито</div>
-                <div class="custom-select-option" data-value="прочее">Прочее</div>
-              </div>
+        </header>
+        <div id="kanban-board" class="kanban-board">
+          <!-- колонки рендерятся js -->
+        </div>
+      </section>
+
+      <!-- ---------- база кандидатов ---------- -->
+      <section id="section-candidates" class="section">
+        <header class="section-header">
+          <h1>база кандидатов</h1>
+          <div class="section-actions">
+            <div class="search-box">
+              <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" id="candidates-search" placeholder="имя, телефон, вакансия..." />
             </div>
-            <input type="hidden" id="candSource" value="прочее">
+            <div id="candidates-filter-vacancy-mount" class="csel-mount csel-mount-sm"></div>
+            <div id="candidates-filter-stage-mount" class="csel-mount csel-mount-sm"></div>
+            <div id="candidates-filter-source-mount" class="csel-mount csel-mount-sm"></div>
+            <button id="candidates-export-btn" class="btn btn-secondary">экспорт</button>
+            <label class="btn btn-secondary" for="candidates-import-input" style="cursor:pointer;">импорт</label>
+            <input type="file" id="candidates-import-input" accept="application/json" hidden />
+            <button id="add-candidate-manual-btn" class="btn btn-primary">+ добавить кандидата</button>
           </div>
+        </header>
+        <div id="today-interviews-block"></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>имя</th><th>телефон</th><th>вакансия</th><th>этап</th><th>источник</th><th>дата создания</th><th>рекрутер</th><th>теги</th>
+              </tr>
+            </thead>
+            <tbody id="candidates-table-body"></tbody>
+          </table>
         </div>
-        <div class="field">
-          <label>Теги</label>
-          <input type="text" id="candTagsInput" placeholder="тег1, тег2, ...">
-        </div>
-      </div>
+      </section>
 
-      <div class="cand-section">
-        <h3>Этап</h3>
-        <div class="field-row">
-          <div class="field"><label>Текущий этап</label><div class="static-value" id="candStageValue">—</div></div>
-          <div class="field"><label>Дата создания</label><div class="static-value" id="candCreatedValue">—</div></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Дата трудоустройства</label><div class="static-value" id="candHiredValue">—</div></div>
-          <div class="field"><label>Дата увольнения</label><div class="static-value" id="candFiredValue">—</div></div>
-        </div>
-      </div>
-
-      <div class="cand-section">
-        <h3>Собеседование</h3>
-        <div class="field-row">
-          <div class="field"><label>Дата</label><input type="date" id="candInterviewDate"></div>
-          <div class="field"><label>Время</label><input type="time" id="candInterviewTime"></div>
-        </div>
-        <div class="field"><label>Комментарий</label><input type="text" id="candInterviewComment"></div>
-        <div class="field">
-          <button class="btn btn-secondary" id="candMissInterviewBtn">❌ Не пришёл на собеседование</button>
-          <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">(3 пропуска → чёрный список)</span>
-        </div>
-      </div>
-
-      <div class="cand-section">
-        <h3>Документы</h3>
-        <div class="doc-row">
-          <span class="doc-label">Анкета (PDF)</span>
-          <div class="doc-drop" id="dropAnketa" data-doctype="anketa">
-            <span id="anketaFileName">перетащите файл или нажмите</span>
+      <!-- ---------- аналитика ---------- -->
+      <section id="section-analytics" class="section">
+        <header class="section-header">
+          <h1>аналитика</h1>
+          <div class="section-actions">
+            <button id="analytics-prev" class="btn btn-ghost">← пред. период</button>
+            <div id="analytics-period-mount" class="csel-mount"></div>
+            <button id="analytics-next" class="btn btn-ghost">след. период →</button>
+            <span id="analytics-period-label" class="progress-label"></span>
           </div>
-          <input type="file" id="fileAnketa" accept="application/pdf" class="hidden">
-        </div>
-        <div class="doc-row">
-          <span class="doc-label">Резюме (PDF)</span>
-          <div class="doc-drop" id="dropResume" data-doctype="resume">
-            <span id="resumeFileName">перетащите файл или нажмите</span>
+        </header>
+        <div id="analytics-content"></div>
+      </section>
+
+      <!-- ---------- пользователи ---------- -->
+      <section id="section-users" class="section">
+        <header class="section-header">
+          <h1>пользователи</h1>
+          <div class="section-actions">
+            <button id="add-user-btn" class="btn btn-primary">+ создать пользователя</button>
           </div>
-          <input type="file" id="fileResume" accept="application/pdf" class="hidden">
+        </header>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>имя</th><th>email</th><th>роль</th><th></th></tr></thead>
+            <tbody id="users-table-body"></tbody>
+          </table>
         </div>
-      </div>
+      </section>
 
-      <div class="cand-section">
-        <h3>Заметки</h3>
-        <textarea id="candNotes" rows="4" placeholder="Заметки автосохраняются..."></textarea>
-        <span class="autosave-hint" id="notesAutosaveHint"></span>
-      </div>
-
-      <div class="cand-section">
-        <h3>История</h3>
-        <div class="history-log" id="candHistory"></div>
-      </div>
-
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="archiveCandidateBtn">Архивировать</button>
-      <button class="btn btn-danger" id="deleteCandidateBtn">Удалить</button>
-      <button class="btn btn-primary" id="saveCandidateBtn">Сохранить</button>
-    </div>
+    </main>
   </div>
-</div>
 
-<!-- МОДАЛКА: подтверждение перехода без анкеты -->
-<div class="modal-overlay hidden" id="modalConfirmStage">
-  <div class="modal modal-xs">
-    <div class="modal-header"><h2>Анкета не загружена</h2></div>
-    <div class="modal-body">
-      <p>Анкета кандидата не загружена.<br>Вы действительно хотите перевести кандидата на следующий этап без анкеты?</p>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" id="cancelStageBtn">Отмена</button>
-      <button class="btn btn-primary" id="continueStageBtn">Продолжить</button>
-    </div>
-  </div>
-</div>
+  <!-- ==================== МОДАЛЬНЫЕ ОКНА ==================== -->
+  <div id="modal-root" class="modal-root"></div>
 
-<!-- МОДАЛКА: юзер -->
-<div class="modal-overlay hidden" id="modalUser">
-  <div class="modal modal-sm">
-    <div class="modal-header"><h2 id="userModalTitle">Новый пользователь</h2><button class="modal-close" data-close>&times;</button></div>
-    <div class="modal-body">
-      <form id="userForm">
-        <input type="hidden" id="userUid">
-        <div class="field"><label>Имя</label><input type="text" id="uName" required></div>
-        <div class="field"><label>Email</label><input type="email" id="uEmail" required></div>
-        <div class="field"><label>Телефон</label><input type="tel" id="uPhone" placeholder="7 999 999-99-99"></div>
-        <div class="field" id="uPasswordField"><label>Пароль</label><input type="password" id="uPassword" autocomplete="new-password"></div>
-        <div class="field">
-          <label>Роль</label>
-          <select id="uRole"><option value="рекрутер">Рекрутер</option><option value="администратор">Администратор</option></select>
-        </div>
-      </form>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" data-close>Отмена</button>
-      <button class="btn btn-danger hidden" id="deleteUserBtn">Удалить</button>
-      <button class="btn btn-primary" id="saveUserBtn">Сохранить</button>
-    </div>
-  </div>
-</div>
+  <!-- ==================== ТОСТЫ ==================== -->
+  <div id="toast-root" class="toast-root"></div>
 
-<!-- МОДАЛКА: настройки -->
-<div class="modal-overlay hidden" id="modalSettings">
-  <div class="modal modal-lg">
-    <div class="modal-header"><h2>Настройки</h2><button class="modal-close" data-close>&times;</button></div>
-    <div class="modal-body settings-body">
-
-      <div class="settings-tabs" id="settingsTabs">
-        <button class="settings-tab active" data-tab="profile">Профиль</button>
-        <button class="settings-tab" data-tab="appearance">Внешний вид</button>
-        <button class="settings-tab" data-tab="backup" id="tabBackupBtn">Резервное копирование</button>
-      </div>
-
-      <div class="settings-panel" data-panel="profile">
-        <div class="field"><label>Имя</label><input type="text" id="settingsName"></div>
-        <div class="field"><label>Email</label><input type="email" id="settingsEmail" disabled></div>
-        <div class="field"><label>Телефон</label><input type="tel" id="settingsPhone" placeholder="7 999 999-99-99"></div>
-        <div class="field"><label>Новый пароль</label><input type="password" id="settingsNewPassword" placeholder="оставьте пустым, если не меняете" autocomplete="new-password"></div>
-        <button class="btn btn-primary" id="saveProfileBtn">Сохранить профиль</button>
-      </div>
-
-      <div class="settings-panel hidden" data-panel="appearance">
-        <div class="theme-picker">
-          <button class="theme-option" data-theme="light">Светлая</button>
-          <button class="theme-option" data-theme="dark">Тёмная</button>
-        </div>
-      </div>
-
-      <div class="settings-panel hidden" data-panel="backup">
-        <p class="hint-text">Экспорт создаёт JSON-файл со всеми данными. Импорт полностью перезапишет текущую базу.</p>
-        <div class="backup-actions">
-          <button class="btn btn-secondary" id="exportBtn">Экспортировать базу</button>
-          <button class="btn btn-secondary" id="importBtn">Импортировать базу</button>
-          <input type="file" id="importFile" accept="application/json" class="hidden">
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<!-- ГЛОБАЛЬНЫЙ ПОИСК -->
-<div class="modal-overlay hidden" id="modalSearch">
-  <div class="modal modal-search">
-    <div class="search-box search-box-modal">
-      <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="globalSearchInput" placeholder="Поиск кандидатов и вакансий...">
-    </div>
-    <div class="search-results" id="globalSearchResults"></div>
-  </div>
-</div>
-
-<!-- toast -->
-<div class="toast-stack" id="toastStack"></div>
-
-<script type="module" src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
+</html>
