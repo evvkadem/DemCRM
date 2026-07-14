@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>demCRM</title>
+<title>DemCRM</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
 <!-- ЭКРАН ВХОДА -->
 <div id="loginScreen" class="login-screen">
   <form id="loginForm" class="login-card">
-    <div class="login-logo">demCRM</div>
+    <div class="login-logo">DemCRM</div>
     <p class="login-sub">recruiting workspace</p>
     <div class="field">
       <label for="loginEmail">Email</label>
@@ -35,7 +35,7 @@
 
   <aside class="sidebar">
     <div class="sidebar-top">
-      <div class="app-logo">demCRM</div>
+      <div class="app-logo">DemCRM</div>
     </div>
 
     <nav class="sidebar-nav">
@@ -46,6 +46,10 @@
       <button class="nav-item" data-view="candidates">
         <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>
         <span>База кандидатов</span>
+      </button>
+      <button class="nav-item" data-view="analytics">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M3 17h4l2-8 3 12 3-9 4 5h2"/></svg>
+        <span>Аналитика</span>
       </button>
       <button class="nav-item hidden" data-view="users" id="navUsers">
         <svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2.5 19c0-3.5 2.7-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="8.5" r="2.5"/><path d="M16 13.2c2.6.4 4.5 2 4.5 5.3"/></svg>
@@ -125,18 +129,42 @@
           <select class="select" id="filterVacancy"><option value="">Все вакансии</option></select>
           <select class="select" id="filterStage"><option value="">Все этапы</option></select>
           <select class="select" id="filterSource"><option value="">Все источники</option></select>
+          <button class="btn btn-secondary" id="exportCandidatesBtn">📤 Экспорт</button>
+          <button class="btn btn-secondary" id="importCandidatesBtn">📥 Импорт</button>
+          <input type="file" id="importCandidatesFile" accept=".csv,.json" class="hidden">
         </div>
       </div>
       <div class="table-wrap">
         <table class="data-table" id="candidatesTable">
           <thead>
             <tr>
-              <th>Имя</th><th>Телефон</th><th>Вакансия</th><th>Этап</th><th>Источник</th><th>Создан</th><th>Рекрутер</th>
+              <th>Имя</th><th>Телефон</th><th>Вакансия</th><th>Этап</th><th>Источник</th><th>Теги</th><th>Создан</th><th>Рекрутер</th>
             </tr>
           </thead>
           <tbody id="candidatesTableBody"></tbody>
         </table>
         <div class="empty-state hidden" id="candidatesEmpty">Ничего не найдено.</div>
+      </div>
+    </section>
+
+    <!-- АНАЛИТИКА -->
+    <section class="view" id="view-analytics" data-view="analytics">
+      <div class="view-header">
+        <h1>Аналитика</h1>
+        <div class="view-controls">
+          <div class="filter-pills" id="analyticsPeriodFilter">
+            <button class="pill active" data-period="day">День</button>
+            <button class="pill" data-period="week">Неделя</button>
+            <button class="pill" data-period="month">Месяц</button>
+            <button class="pill" data-period="year">Год</button>
+          </div>
+          <input type="date" id="analyticsDate" class="select">
+        </div>
+      </div>
+      <div class="analytics-dashboard">
+        <div class="analytics-grid" id="analyticsGrid"></div>
+        <div class="analytics-charts" id="analyticsCharts"></div>
+        <div class="analytics-conversion" id="analyticsConversion"></div>
       </div>
     </section>
 
@@ -150,7 +178,7 @@
       </div>
       <div class="table-wrap">
         <table class="data-table" id="usersTable">
-          <thead><tr><th>Имя</th><th>Email</th><th>Роль</th><th></th></tr></thead>
+          <thead><tr><th>Имя</th><th>Email</th><th>Роль</th><th>Телефон</th><th></th></tr></thead>
           <tbody id="usersTableBody"></tbody>
         </table>
       </div>
@@ -170,7 +198,10 @@
       <form id="vacancyForm">
         <input type="hidden" id="vacancyId">
         <div class="field"><label>Название</label><input type="text" id="vTitle" required></div>
-        <div class="field"><label>Руководитель отдела</label><input type="text" id="vManager" required></div>
+        <div class="field"><label>Руководитель</label>
+          <select id="vManager" required></select>
+        </div>
+        <div class="field"><label>Телефон руководителя</label><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99"></div>
         <div class="field"><label>Описание</label><textarea id="vDescription" rows="3"></textarea></div>
         <div class="field-row">
           <div class="field"><label>Открытых мест</label><input type="number" id="vPositions" min="1" value="1" required></div>
@@ -201,12 +232,27 @@
     <div class="modal-body">
       <form id="addCandidateForm">
         <div class="field"><label>Имя</label><input type="text" id="cAddName" required></div>
-        <div class="field"><label>Телефон</label><input type="tel" id="cAddPhone" required></div>
+        <div class="field"><label>Телефон</label><input type="tel" id="cAddPhone" placeholder="7 999 999-99-99" required></div>
         <div class="field">
           <label>Источник</label>
-          <select id="cAddSource"><option value="hh">hh</option><option value="авито">Авито</option><option value="прочее">Прочее</option></select>
+          <div class="custom-select" id="cAddSourceSelect">
+            <div class="custom-select-trigger" data-target="cAddSourceOptions">Прочее</div>
+            <div class="custom-select-options hidden" id="cAddSourceOptions">
+              <div class="custom-select-option" data-value="hh">hh</div>
+              <div class="custom-select-option" data-value="авито">Авито</div>
+              <div class="custom-select-option" data-value="прочее">Прочее</div>
+            </div>
+          </div>
+          <input type="hidden" id="cAddSource" value="прочее">
+        </div>
+        <div class="field">
+          <label>Теги</label>
+          <input type="text" id="cAddTags" placeholder="тег1, тег2, ...">
         </div>
       </form>
+      <div id="candidateExistsWarning" class="hidden" style="background:var(--warning-bg);padding:10px;border-radius:8px;margin-top:10px;color:var(--warning);">
+        ⚠️ Кандидат с таким именем или телефоном уже существует в базе. <a href="#" id="gotoExistingCandidate" style="color:var(--text);text-decoration:underline;">Перейти к карточке</a>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" data-close>Отмена</button>
@@ -230,14 +276,28 @@
         <h3>Основные данные</h3>
         <div class="field-row">
           <div class="field"><label>ФИО</label><input type="text" id="candName"></div>
-          <div class="field"><label>Телефон</label><input type="tel" id="candPhone"></div>
+          <div class="field"><label>Телефон</label><input type="tel" id="candPhone" placeholder="7 999 999-99-99"></div>
         </div>
         <div class="field-row">
-          <div class="field"><label>Вакансия</label><select id="candVacancy"></select></div>
+          <div class="field"><label>Вакансия</label>
+            <select id="candVacancy"></select>
+          </div>
           <div class="field">
             <label>Источник</label>
-            <select id="candSource"><option value="hh">hh</option><option value="авито">Авито</option><option value="прочее">Прочее</option></select>
+            <div class="custom-select" id="candSourceSelect">
+              <div class="custom-select-trigger" data-target="candSourceOptions">Прочее</div>
+              <div class="custom-select-options hidden" id="candSourceOptions">
+                <div class="custom-select-option" data-value="hh">hh</div>
+                <div class="custom-select-option" data-value="авито">Авито</div>
+                <div class="custom-select-option" data-value="прочее">Прочее</div>
+              </div>
+            </div>
+            <input type="hidden" id="candSource" value="прочее">
           </div>
+        </div>
+        <div class="field">
+          <label>Теги</label>
+          <input type="text" id="candTagsInput" placeholder="тег1, тег2, ...">
         </div>
       </div>
 
@@ -260,6 +320,10 @@
           <div class="field"><label>Время</label><input type="time" id="candInterviewTime"></div>
         </div>
         <div class="field"><label>Комментарий</label><input type="text" id="candInterviewComment"></div>
+        <div class="field">
+          <button class="btn btn-secondary" id="candMissInterviewBtn">❌ Не пришёл на собеседование</button>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">(3 пропуска → чёрный список)</span>
+        </div>
       </div>
 
       <div class="cand-section">
@@ -323,6 +387,7 @@
         <input type="hidden" id="userUid">
         <div class="field"><label>Имя</label><input type="text" id="uName" required></div>
         <div class="field"><label>Email</label><input type="email" id="uEmail" required></div>
+        <div class="field"><label>Телефон</label><input type="tel" id="uPhone" placeholder="7 999 999-99-99"></div>
         <div class="field" id="uPasswordField"><label>Пароль</label><input type="password" id="uPassword" autocomplete="new-password"></div>
         <div class="field">
           <label>Роль</label>
@@ -347,13 +412,13 @@
       <div class="settings-tabs" id="settingsTabs">
         <button class="settings-tab active" data-tab="profile">Профиль</button>
         <button class="settings-tab" data-tab="appearance">Внешний вид</button>
-        <button class="settings-tab" data-tab="analytics">Аналитика</button>
-        <button class="settings-tab hidden" data-tab="backup" id="tabBackupBtn">Резервное копирование</button>
+        <button class="settings-tab" data-tab="backup" id="tabBackupBtn">Резервное копирование</button>
       </div>
 
       <div class="settings-panel" data-panel="profile">
         <div class="field"><label>Имя</label><input type="text" id="settingsName"></div>
         <div class="field"><label>Email</label><input type="email" id="settingsEmail" disabled></div>
+        <div class="field"><label>Телефон</label><input type="tel" id="settingsPhone" placeholder="7 999 999-99-99"></div>
         <div class="field"><label>Новый пароль</label><input type="password" id="settingsNewPassword" placeholder="оставьте пустым, если не меняете" autocomplete="new-password"></div>
         <button class="btn btn-primary" id="saveProfileBtn">Сохранить профиль</button>
       </div>
@@ -363,11 +428,6 @@
           <button class="theme-option" data-theme="light">Светлая</button>
           <button class="theme-option" data-theme="dark">Тёмная</button>
         </div>
-      </div>
-
-      <div class="settings-panel hidden" data-panel="analytics">
-        <div class="analytics-grid" id="analyticsGrid"></div>
-        <div class="analytics-charts" id="analyticsCharts"></div>
       </div>
 
       <div class="settings-panel hidden" data-panel="backup">
