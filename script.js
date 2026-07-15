@@ -201,6 +201,7 @@ function showView(name) {
   $all(".view").forEach((v) => v.classList.add("hidden"));
   $("#view-" + name).classList.remove("hidden");
   $all(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === name));
+  $(".main").scrollTop = 0;
   if (name === "candidates") renderCandidatesTable();
   if (name === "analytics") renderAnalytics();
   if (name === "users") renderUsersTable();
@@ -273,6 +274,7 @@ $("#addVacancyBtn").addEventListener("click", () => {
   editingVacancyId = null;
   $("#vacancyModalTitle").textContent = "Новая вакансия";
   $("#vacancyForm").reset();
+  refreshCustomSelect($("#vStatus"));
   $("#vOpenDate").value = new Date().toISOString().slice(0, 10);
   openModal("vacancyModal");
 });
@@ -496,6 +498,8 @@ function openCandidateModal(candidateId, activeTab = "info") {
   $("#cPhone").value = c ? formatPhone(c.phone) : "";
   $("#cVacancy").value = c?.vacancyId || state.currentVacancyId || "";
   $("#cSource").value = c?.source || "hh";
+  refreshCustomSelect($("#cVacancy"));
+  refreshCustomSelect($("#cSource"));
   $("#cResumeLink").value = c?.resumeLink || "";
   $("#cComment").value = c?.comment || "";
 
@@ -514,6 +518,7 @@ function openCandidateModal(candidateId, activeTab = "info") {
 function switchCandidateTab(tab) {
   $all(".modal-tab", $("#candidateTabs")).forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $all(".tab-pane", $("#candidateModal")).forEach((p) => p.classList.toggle("active", p.dataset.pane === tab));
+  $(".modal-body", $("#candidateModal")).scrollTop = 0;
 }
 $("#candidateTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".modal-tab");
@@ -1169,6 +1174,7 @@ function renderUsersTable() {
 
 $("#addUserBtn").addEventListener("click", () => {
   $("#userForm").reset();
+  refreshCustomSelect($("#uRole"));
   openModal("userModal");
 });
 
@@ -1196,6 +1202,7 @@ $("#settingsTabs").addEventListener("click", (e) => {
   if (!btn) return;
   $all(".modal-tab", $("#settingsTabs")).forEach((b) => b.classList.toggle("active", b === btn));
   $all(".tab-pane", $("#settingsModal")).forEach((p) => p.classList.toggle("active", p.dataset.settingsPane === btn.dataset.settingsTab));
+  $(".modal-body", $("#settingsModal")).scrollTop = 0;
 });
 
 $("#saveProfileBtn").addEventListener("click", async () => {
@@ -1336,3 +1343,86 @@ function initListeners() {
 
   showView("vacancies");
 }
+
+// ----------------------------------------------------------------
+// 17. CUSTOM DROPDOWNS
+// Прогрессивное улучшение обычных <select class="js-enhance"> в
+// кастомный список (пункт 2.10 тз). Логика значений (.value,
+// событие change) остаётся на нативном select — весь остальной код
+// продолжает работать как раньше, здесь только слой отрисовки.
+// ----------------------------------------------------------------
+
+let openCustomSelect = null;
+
+function buildCustomSelectPanel(selectEl, panel) {
+  panel.innerHTML = "";
+  [...selectEl.options].forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "custom-select-option" + (opt.value === selectEl.value ? " selected" : "");
+    btn.textContent = opt.textContent;
+    btn.addEventListener("click", () => {
+      selectEl.value = opt.value;
+      selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+      refreshCustomSelect(selectEl);
+      closeCustomSelect();
+    });
+    panel.appendChild(btn);
+  });
+}
+
+function refreshCustomSelect(selectEl) {
+  const wrap = selectEl.nextElementSibling;
+  if (!wrap || !wrap.classList.contains("custom-select")) return;
+  const label = $(".custom-select-label", wrap);
+  const selectedOption = selectEl.options[selectEl.selectedIndex];
+  label.textContent = selectedOption ? selectedOption.textContent : "";
+  buildCustomSelectPanel(selectEl, $(".custom-select-panel", wrap));
+}
+
+function closeCustomSelect() {
+  if (!openCustomSelect) return;
+  openCustomSelect.classList.remove("open");
+  $(".custom-select-panel", openCustomSelect).classList.add("hidden");
+  openCustomSelect = null;
+}
+
+function initCustomSelects() {
+  $all("select.js-enhance:not(.enhanced)").forEach((selectEl) => {
+    selectEl.classList.add("enhanced");
+
+    const wrap = document.createElement("div");
+    wrap.className = "custom-select";
+    wrap.innerHTML = `
+      <button type="button" class="custom-select-trigger">
+        <span class="custom-select-label"></span>
+        <span class="custom-select-chevron">▾</span>
+      </button>
+      <div class="custom-select-panel hidden"></div>
+    `;
+    selectEl.insertAdjacentElement("afterend", wrap);
+    refreshCustomSelect(selectEl);
+
+    $(".custom-select-trigger", wrap).addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = wrap.classList.contains("open");
+      closeCustomSelect();
+      if (!isOpen) {
+        wrap.classList.add("open");
+        $(".custom-select-panel", wrap).classList.remove("hidden");
+        openCustomSelect = wrap;
+      }
+    });
+
+    // синхронизация при программной перерисовке options (innerHTML rewrite
+    // из populateCandidateFilters / fillVacancySelect / populateAnalyticsScope)
+    new MutationObserver(() => refreshCustomSelect(selectEl)).observe(selectEl, { childList: true });
+  });
+}
+
+document.addEventListener("click", closeCustomSelect);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCustomSelect(); });
+
+document.addEventListener("DOMContentLoaded", initCustomSelects);
+// на случай, если DOMContentLoaded уже прошёл к моменту загрузки модуля
+if (document.readyState !== "loading") initCustomSelects();

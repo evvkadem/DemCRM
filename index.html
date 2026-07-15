@@ -81,7 +81,9 @@
     <!-- ---------------- ВАКАНСИИ ---------------- -->
     <section id="view-vacancies" class="view">
       <header class="view-header">
-        <h1>Вакансии</h1>
+        <div class="view-header-top">
+          <h1>Вакансии</h1>
+        </div>
         <div class="view-header-actions">
           <input type="search" class="search-input" id="vacancySearch" placeholder="Поиск по названию или руководителю" />
           <div class="segmented" id="vacancyFilter">
@@ -101,8 +103,10 @@
     <!-- ---------------- KANBAN ---------------- -->
     <section id="view-kanban" class="view hidden">
       <header class="view-header">
-        <button class="btn-back" id="kanbanBackBtn">← Вакансии</button>
-        <h1 id="kanbanVacancyTitle">Kanban</h1>
+        <div class="view-header-top">
+          <button class="btn-back" id="kanbanBackBtn">← Вакансии</button>
+          <h1 id="kanbanVacancyTitle">Kanban</h1>
+        </div>
         <div class="view-header-actions">
           <button class="btn btn-primary" id="addCandidateBtn">+ Добавить кандидата</button>
         </div>
@@ -127,7 +131,9 @@
     <!-- ---------------- БАЗА КАНДИДАТОВ ---------------- -->
     <section id="view-candidates" class="view hidden">
       <header class="view-header">
-        <h1>База кандидатов</h1>
+        <div class="view-header-top">
+          <h1>База кандидатов</h1>
+        </div>
         <div class="view-header-actions">
           <input type="search" class="search-input" id="candidateSearch" placeholder="ФИО, телефон, вакансия" />
           <button class="btn btn-secondary" id="importBtn">Импорт</button>
@@ -135,10 +141,10 @@
       </header>
 
       <div class="filters-row" id="candidateFilters">
-        <select class="select-input" id="filterVacancy"><option value="">Вакансия: все</option></select>
-        <select class="select-input" id="filterStage"><option value="">Этап: все</option></select>
-        <select class="select-input" id="filterSource"><option value="">Источник: все</option></select>
-        <select class="select-input" id="filterStatus"><option value="">Статус: все</option></select>
+        <select class="select-input js-enhance" id="filterVacancy"><option value="">Вакансия: все</option></select>
+        <select class="select-input js-enhance" id="filterStage"><option value="">Этап: все</option></select>
+        <select class="select-input js-enhance" id="filterSource"><option value="">Источник: все</option></select>
+        <select class="select-input js-enhance" id="filterStatus"><option value="">Статус: все</option></select>
       </div>
 
       <div class="bulk-bar hidden" id="bulkBar">
@@ -172,9 +178,11 @@
     <!-- ---------------- АНАЛИТИКА ---------------- -->
     <section id="view-analytics" class="view hidden">
       <header class="view-header">
-        <h1>Аналитика</h1>
+        <div class="view-header-top">
+          <h1>Аналитика</h1>
+        </div>
         <div class="view-header-actions">
-          <select class="select-input" id="analyticsScope"><option value="all">Вся CRM</option></select>
+          <select class="select-input js-enhance" id="analyticsScope"><option value="all">Вся CRM</option></select>
           <div class="segmented" id="analyticsPeriod">
             <button class="segmented-item" data-period="day">День</button>
             <button class="segmented-item" data-period="week">Неделя</button>
@@ -200,7 +208,9 @@
     <!-- ---------------- ПОЛЬЗОВАТЕЛИ ---------------- -->
     <section id="view-users" class="view hidden">
       <header class="view-header">
-        <h1>Пользователи</h1>
+        <div class="view-header-top">
+          <h1>Пользователи</h1>
+        </div>
         <div class="view-header-actions">
           <button class="btn btn-primary" id="addUserBtn">+ Создать пользователя</button>
         </div>
@@ -237,7 +247,7 @@
       <label class="field field-full"><span class="field-label">Описание</span><textarea id="vDescription" rows="3"></textarea></label>
       <label class="field"><span class="field-label">Количество мест *</span><input type="number" id="vSlots" min="1" required /></label>
       <label class="field"><span class="field-label">Статус</span>
-        <select id="vStatus"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
+        <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
       </label>
       <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
       <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
@@ -271,10 +281,10 @@
         <label class="field"><span class="field-label">ФИО *</span><input type="text" id="cName" required /></label>
         <label class="field"><span class="field-label">Телефон *</span><input type="tel" id="cPhone" required placeholder="7 999 999-99-99" /></label>
         <label class="field"><span class="field-label">Вакансия *</span>
-          <select id="cVacancy" required></select>
+          <select id="cVacancy" class="js-enhance" required></select>
         </label>
         <label class="field"><span class="field-label">Источник *</span>
-          <select id="cSource" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
+          <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
         </label>
         <label class="field field-full"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
         <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="cComment" rows="2"></textarea></label>
@@ -388,7 +398,7 @@
       <label class="field field-full"><span class="field-label">Email</span><input type="email" id="uEmail" required /></label>
       <label class="field field-full"><span class="field-label">Пароль</span><input type="password" id="uPassword" required minlength="6" /></label>
       <label class="field field-full"><span class="field-label">Роль</span>
-        <select id="uRole"><option value="recruiter">Рекрутер</option><option value="admin">Администратор</option></select>
+        <select id="uRole" class="js-enhance"><option value="recruiter">Рекрутер</option><option value="admin">Администратор</option></select>
       </label>
     </form>
   </div>
