@@ -147,6 +147,7 @@
       <div class="bulk-bar hidden" id="bulkBar">
         <span id="bulkCount">0 выбрано</span>
         <button class="btn btn-tiny" id="bulkTagBtn">Добавить тег</button>
+        <button class="btn btn-tiny" id="bulkStageBtn">Изменить этап</button>
         <button class="btn btn-tiny" id="bulkVacancyBtn">Изменить вакансию</button>
         <button class="btn btn-tiny" id="bulkReturnBtn">Вернуть в Kanban</button>
         <button class="btn btn-tiny btn-danger" id="bulkDeleteBtn">Удалить</button>
@@ -416,7 +417,7 @@
     <button class="modal-close" data-close-modal="importModal">✕</button>
   </div>
   <div class="modal-body">
-    <p class="import-hint">Загрузите файл Excel/CSV или вставьте таблицу из буфера обмена (Ctrl+V). Ожидаемые колонки: ФИО, Телефон, Вакансия, Источник.</p>
+    <p class="import-hint">Загрузите файл Excel/CSV или вставьте таблицу из буфера обмена (Ctrl+V). Ожидаемые колонки: ФИО, Телефон, Вакансия, Источник, Дата добавления, Ссылка на резюме.</p>
     <input type="file" id="importFile" accept=".csv,.xlsx,.xls" />
     <textarea id="importPasteArea" rows="8" placeholder="Вставьте сюда данные из Excel..."></textarea>
     <div id="importPreview" class="import-preview"></div>

@@ -709,7 +709,19 @@ $("#addInterviewBtn").addEventListener("click", async () => {
     date, time, comment: $("#newInterviewComment").value.trim(), result: "",
   });
   await logHistory(candidateId, `Назначено собеседование: ${formatDate(date)} ${time}`);
+
+  // автоматический перевод на этап "Собеседование" — только вперёд по воронке,
+  // если кандидат уже прошёл дальше (например, "Отобрано"), назад не откатываем
+  const c = state.candidates[candidateId];
+  const interviewStageIdx = STAGES.indexOf("Собеседование");
+  if (c && STAGES.indexOf(c.stage) < interviewStageIdx) {
+    await dbUpdate(`candidates/${candidateId}`, { stage: "Собеседование", stageChangedAt: nowISO() });
+    await logHistory(candidateId, `Этап автоматически изменён: ${c.stage} → Собеседование`);
+  }
+
   $("#newInterviewComment").value = "";
+  renderInterviewsTab(state.candidates[candidateId], candidateId);
+  renderStageTab(state.candidates[candidateId]);
   toast("Собеседование назначено");
 });
 
@@ -720,14 +732,18 @@ async function setInterviewResult(candidateId, ivId, result) {
 
   if (result === "noshow") {
     const newCount = (c.noShowCount || 0) + 1;
-    await dbUpdate(`candidates/${candidateId}`, { noShowCount: newCount });
+    await dbUpdate(`candidates/${candidateId}`, { noShowCount: newCount, onKanban: false });
+    await logHistory(candidateId, "Убран с Kanban (не пришёл на собеседование)");
     if (newCount >= NOSHOW_LIMIT) {
       await addSystemTagToCandidate(candidateId, "чёрный список");
       toast("Кандидат добавлен в чёрный список (3 неявки)");
     }
   } else if (result === "fail") {
-    await dbUpdate(`candidates/${candidateId}`, { status: "не подходит" });
+    await dbUpdate(`candidates/${candidateId}`, { status: "не подходит", onKanban: false });
+    await logHistory(candidateId, "Убран с Kanban (не прошёл собеседование)");
   }
+  renderInterviewsTab(state.candidates[candidateId], candidateId);
+  renderStageTab(state.candidates[candidateId]);
   toast("Результат сохранён");
 }
 
@@ -1007,6 +1023,25 @@ async function openBulkReturnFlow(defaultVacancyId) {
   toast("Кандидаты возвращены в Kanban");
 }
 
+$("#bulkStageBtn").addEventListener("click", () => {
+  const numbered = STAGES.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  const input = prompt(`Введите номер этапа:\n${numbered}`);
+  if (!input) return;
+  const idx = Number(input.trim()) - 1;
+  if (idx < 0 || idx >= STAGES.length) { toast("Некорректный номер этапа", true); return; }
+  const newStage = STAGES[idx];
+  (async () => {
+    for (const id of state.selectedCandidateIds) {
+      const c = state.candidates[id];
+      await dbUpdate(`candidates/${id}`, { stage: newStage, stageChangedAt: nowISO(), onKanban: true, employmentDate: null });
+      await logHistory(id, `Этап изменён вручную из базы: ${c?.stage || "—"} → ${newStage}`);
+    }
+    state.selectedCandidateIds.clear();
+    updateBulkBar();
+    toast("Этап обновлён у выбранных кандидатов");
+  })();
+});
+
 $("#bulkVacancyBtn").addEventListener("click", () => {
   const title = prompt("Введите точное название вакансии, в которую перенести выбранных кандидатов:");
   if (!title) return;
@@ -1060,7 +1095,7 @@ $("#importFile").addEventListener("change", (e) => {
   } else {
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const wb = XLSX.read(ev.target.result, { type: "binary" });
+      const wb = XLSX.read(ev.target.result, { type: "binary", cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet);
       setImportRows(rows);
@@ -1081,6 +1116,26 @@ $("#importPasteArea").addEventListener("input", (e) => {
   }
 });
 
+function parseImportDate(value) {
+  if (!value) return null;
+  if (value instanceof Date && !isNaN(value)) return value.getTime();
+  if (typeof value === "number") {
+    // Excel serial date (дней с 1899-12-30)
+    const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+    return isNaN(d) ? null : d.getTime();
+  }
+  const str = String(value).trim();
+  const ruMatch = str.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/);
+  if (ruMatch) {
+    let [, d, m, y] = ruMatch;
+    if (y.length === 2) y = "20" + y;
+    const date = new Date(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
+    return isNaN(date) ? null : date.getTime();
+  }
+  const parsed = new Date(str);
+  return isNaN(parsed) ? null : parsed.getTime();
+}
+
 function normalizeImportRow(row) {
   const find = (keys) => {
     for (const k of Object.keys(row)) {
@@ -1093,6 +1148,8 @@ function normalizeImportRow(row) {
     phone: find(["телефон", "phone"]),
     vacancy: find(["вакансия", "vacancy"]),
     source: find(["источник", "source"]),
+    createdAt: find(["дата добавления", "дата", "date", "created"]),
+    resumeLink: find(["ссылка на резюме", "резюме", "resume", "cv"]),
   };
 }
 
@@ -1100,8 +1157,8 @@ function setImportRows(rawRows) {
   state.importRows = rawRows.map(normalizeImportRow).filter((r) => r.name || r.phone);
   const preview = $("#importPreview");
   if (!state.importRows.length) { preview.innerHTML = ""; return; }
-  preview.innerHTML = `<table class="data-table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Вакансия</th><th>Источник</th></tr></thead><tbody>` +
-    state.importRows.slice(0, 50).map((r) => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.phone)}</td><td>${escapeHtml(r.vacancy)}</td><td>${escapeHtml(r.source)}</td></tr>`).join("") +
+  preview.innerHTML = `<table class="data-table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Вакансия</th><th>Источник</th><th>Дата добавления</th><th>Ссылка на резюме</th></tr></thead><tbody>` +
+    state.importRows.slice(0, 50).map((r) => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.phone)}</td><td>${escapeHtml(r.vacancy)}</td><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.createdAt instanceof Date ? formatDate(r.createdAt) : r.createdAt)}</td><td>${escapeHtml(r.resumeLink)}</td></tr>`).join("") +
     `</tbody></table><p>${state.importRows.length} строк найдено</p>`;
 }
 
@@ -1120,9 +1177,10 @@ $("#confirmImportBtn").addEventListener("click", async () => {
       phone: pDigits,
       vacancyId: vacancyEntry ? vacancyEntry[0] : Object.keys(state.vacancies)[0] || "",
       source: sourceMap[(row.source || "").toLowerCase()] || "other",
+      resumeLink: (row.resumeLink || "").toString().trim(),
       stage: "Отклик",
       status: "активный",
-      createdAt: Date.now(),
+      createdAt: parseImportDate(row.createdAt) || Date.now(),
       stageChangedAt: nowISO(),
       noShowCount: 0,
       onKanban: true,
