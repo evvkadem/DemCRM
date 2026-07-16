@@ -192,7 +192,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 }
 .view-header-top { display: flex; align-items: center; min-height: 30px; }
 .view-header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 30px; }
-.view-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: var(--control-h); }
+.view-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; min-height: var(--control-h); }
 .search-input { width: 260px; flex-shrink: 0; }
 
 .segmented { display: flex; align-items: center; background: var(--bg-subtle); border-radius: var(--radius-sm); padding: 3px; height: var(--control-h); box-sizing: border-box; }
@@ -234,8 +234,9 @@ select.js-enhance.enhanced { display: none; }
   box-shadow: var(--shadow-modal);
   padding: 6px;
   z-index: 150;
-  animation: modalIn var(--transition);
+  animation: dropdownIn var(--transition);
 }
+@keyframes dropdownIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .custom-select-option {
   display: block;
   width: 100%;
@@ -330,6 +331,7 @@ select.js-enhance.enhanced { display: none; }
 .kcard.dragging { opacity: 0.4; }
 .kcard-name { font-weight: 500; font-size: 13px; margin-bottom: 3px; }
 .kcard-phone { color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+.kcard-vacancy { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; }
 .kcard-meta { display: flex; justify-content: space-between; align-items: center; }
 .kcard-source { font-size: 11px; color: var(--text-tertiary); }
 .kcard-today { font-size: 10.5px; color: var(--danger); font-weight: 600; }

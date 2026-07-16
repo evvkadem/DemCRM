@@ -209,9 +209,11 @@ function showView(name) {
 }
 
 $all(".nav-item").forEach((btn) =>
-  btn.addEventListener("click", () => showView(btn.dataset.view))
+  btn.addEventListener("click", () => {
+    if (btn.dataset.view === "kanban") openKanban(null);
+    else showView(btn.dataset.view);
+  })
 );
-$("#kanbanBackBtn").addEventListener("click", () => showView("vacancies"));
 
 // ----------------------------------------------------------------
 // 5. VACANCIES
@@ -247,7 +249,7 @@ function renderVacancies() {
       <div class="vacancy-card-row"><span class="vacancy-card-status">${statusLabel[v.status] || v.status}</span><span>${formatDate(v.openDate)}</span></div>
       <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
     `;
-    card.addEventListener("click", () => openKanbanForVacancy(id));
+    card.addEventListener("click", () => openVacancyEditModal(id));
     grid.appendChild(card);
   });
 }
@@ -276,7 +278,49 @@ $("#addVacancyBtn").addEventListener("click", () => {
   $("#vacancyForm").reset();
   refreshCustomSelect($("#vStatus"));
   $("#vOpenDate").value = new Date().toISOString().slice(0, 10);
+  $("#deleteVacancyBtn").classList.add("hidden");
+  $("#openVacancyKanbanBtn").classList.add("hidden");
   openModal("vacancyModal");
+});
+
+function openVacancyEditModal(id) {
+  const v = state.vacancies[id];
+  if (!v) return;
+  editingVacancyId = id;
+  $("#vacancyModalTitle").textContent = v.title;
+  $("#vTitle").value = v.title || "";
+  $("#vManager").value = v.manager || "";
+  $("#vManagerPhone").value = formatPhone(v.managerPhone || "");
+  $("#vDescription").value = v.description || "";
+  $("#vSlots").value = v.slots || 1;
+  $("#vStatus").value = v.status || "active";
+  refreshCustomSelect($("#vStatus"));
+  $("#vOpenDate").value = v.openDate || "";
+  $("#vCloseDate").value = v.closeDate || "";
+  $("#vComment").value = v.comment || "";
+  $("#deleteVacancyBtn").classList.remove("hidden");
+  $("#openVacancyKanbanBtn").classList.remove("hidden");
+  openModal("vacancyModal");
+}
+
+$("#openVacancyKanbanBtn").addEventListener("click", () => {
+  const id = editingVacancyId;
+  closeModal("vacancyModal");
+  openKanban(id);
+});
+
+$("#deleteVacancyBtn").addEventListener("click", () => {
+  const id = editingVacancyId;
+  if (!id) return;
+  const candidatesCount = Object.values(state.candidates).filter((c) => c.vacancyId === id).length;
+  const warn = candidatesCount
+    ? `Удалить вакансию? У неё ${candidatesCount} кандидатов — они останутся в базе, но без привязки к вакансии.`
+    : "Удалить вакансию без возможности восстановления?";
+  confirmAction(warn, async () => {
+    await dbRemove(`vacancies/${id}`);
+    closeModal("vacancyModal");
+    toast("Вакансия удалена");
+  });
 });
 
 $("#saveVacancyBtn").addEventListener("click", async () => {
@@ -319,15 +363,29 @@ function updateManagersList() {
 // 6. KANBAN
 // ----------------------------------------------------------------
 
-function openKanbanForVacancy(vacancyId) {
-  state.currentVacancyId = vacancyId;
-  const v = state.vacancies[vacancyId];
-  $("#kanbanVacancyTitle").textContent = v ? v.title : "Kanban";
+function populateKanbanScope() {
+  const sel = $("#kanbanVacancyScope");
+  const keep = sel.value;
+  sel.innerHTML = `<option value="">Все вакансии</option>` +
+    Object.entries(state.vacancies).map(([id, v]) => `<option value="${id}">${escapeHtml(v.title)}</option>`).join("");
+  sel.value = keep;
+  refreshCustomSelect(sel);
+}
+
+function openKanban(vacancyId) {
+  state.currentVacancyId = vacancyId || null;
   state.interviewDateOffset = 0;
   showView("kanban");
+  populateKanbanScope();
+  $("#kanbanVacancyScope").value = state.currentVacancyId || "";
+  refreshCustomSelect($("#kanbanVacancyScope"));
   renderKanban();
   renderInterviewsPanel();
 }
+
+$("#kanbanVacancyScope").addEventListener("change", (e) => {
+  openKanban(e.target.value || null);
+});
 
 function renderKanban() {
   const board = $("#kanbanBoard");
@@ -340,7 +398,7 @@ function renderKanban() {
     col.dataset.stage = stage;
 
     const candidatesInStage = Object.entries(state.candidates)
-      .filter(([id, c]) => c.vacancyId === vacancyId && c.stage === stage && !(stage === "Трудоустройство" && c.employmentDate))
+      .filter(([id, c]) => (!vacancyId || c.vacancyId === vacancyId) && c.stage === stage && !(stage === "Трудоустройство" && c.employmentDate))
       .sort((a, b) => {
         const aNext = nextInterviewTime(a[0]);
         const bNext = nextInterviewTime(b[0]);
@@ -393,6 +451,7 @@ function renderKCard(id, c) {
   el.innerHTML = `
     <div class="kcard-name">${escapeHtml(c.name)}</div>
     <div class="kcard-phone">${escapeHtml(formatPhone(c.phone))}</div>
+    ${!state.currentVacancyId ? `<div class="kcard-vacancy">${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</div>` : ""}
     <div class="kcard-meta">
       <span class="kcard-source">${sourceLabel(c.source)}</span>
       ${hasInterviewToday ? '<span class="kcard-today">сегодня собес.</span>' : ""}
@@ -446,7 +505,7 @@ function renderInterviewsPanel() {
 
   const items = [];
   Object.entries(state.candidates).forEach(([id, c]) => {
-    if (c.vacancyId !== state.currentVacancyId || !c.interviews) return;
+    if ((state.currentVacancyId && c.vacancyId !== state.currentVacancyId) || !c.interviews) return;
     Object.values(c.interviews).forEach((iv) => {
       if (iv.date === targetStr) items.push({ candidateId: id, candidate: c, iv });
     });
@@ -1294,7 +1353,7 @@ $("#quickSearchInput").addEventListener("input", (e) => {
     const item = document.createElement("div");
     item.className = "quick-search-item";
     item.innerHTML = `${escapeHtml(v.title)}<small>Вакансия · ${escapeHtml(v.manager || "")}</small>`;
-    item.addEventListener("click", () => { closeModal("quickSearchModal"); openKanbanForVacancy(id); });
+    item.addEventListener("click", () => { closeModal("quickSearchModal"); openKanban(id); });
     box.appendChild(item);
   });
   if (!candMatches.length && !vacMatches.length) box.innerHTML = `<div class="quick-search-item">Ничего не найдено</div>`;
@@ -1316,9 +1375,9 @@ function initListeners() {
     state.vacancies = data || {};
     updateManagersList();
     if ($("#view-vacancies") && !$("#view-vacancies").classList.contains("hidden")) renderVacancies();
-    if (state.currentVacancyId && !$("#view-kanban").classList.contains("hidden")) {
-      const v = state.vacancies[state.currentVacancyId];
-      if (v) $("#kanbanVacancyTitle").textContent = v.title;
+    if (!$("#view-kanban").classList.contains("hidden")) {
+      populateKanbanScope();
+      renderKanban();
     }
   });
 
@@ -1341,7 +1400,7 @@ function initListeners() {
     if (!$("#view-users").classList.contains("hidden")) renderUsersTable();
   });
 
-  showView("vacancies");
+  openKanban(null);
 }
 
 // ----------------------------------------------------------------
@@ -1380,6 +1439,20 @@ function refreshCustomSelect(selectEl) {
   buildCustomSelectPanel(selectEl, $(".custom-select-panel", wrap));
 }
 
+function positionCustomSelectPanel(wrap) {
+  const panel = $(".custom-select-panel", wrap);
+  const trigger = $(".custom-select-trigger", wrap);
+  panel.style.left = "0";
+  panel.style.right = "auto";
+  const triggerRect = trigger.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const overflowRight = triggerRect.left + panelRect.width - window.innerWidth + 16;
+  if (overflowRight > 0) {
+    panel.style.left = "auto";
+    panel.style.right = "0";
+  }
+}
+
 function closeCustomSelect() {
   if (!openCustomSelect) return;
   openCustomSelect.classList.remove("open");
@@ -1411,6 +1484,7 @@ function initCustomSelects() {
         wrap.classList.add("open");
         $(".custom-select-panel", wrap).classList.remove("hidden");
         openCustomSelect = wrap;
+        positionCustomSelectPanel(wrap);
       }
     });
 

@@ -104,10 +104,10 @@
     <section id="view-kanban" class="view hidden">
       <header class="view-header">
         <div class="view-header-top">
-          <button class="btn-back" id="kanbanBackBtn">← Вакансии</button>
-          <h1 id="kanbanVacancyTitle">Kanban</h1>
+          <h1>Kanban</h1>
         </div>
         <div class="view-header-actions">
+          <select class="select-input js-enhance" id="kanbanVacancyScope"><option value="">Все вакансии</option></select>
           <button class="btn btn-primary" id="addCandidateBtn">+ Добавить кандидата</button>
         </div>
       </header>
@@ -134,18 +134,15 @@
         <div class="view-header-top">
           <h1>База кандидатов</h1>
         </div>
-        <div class="view-header-actions">
+        <div class="view-header-actions" id="candidateFilters">
           <input type="search" class="search-input" id="candidateSearch" placeholder="ФИО, телефон, вакансия" />
+          <select class="select-input js-enhance" id="filterVacancy"><option value="">Вакансия: все</option></select>
+          <select class="select-input js-enhance" id="filterStage"><option value="">Этап: все</option></select>
+          <select class="select-input js-enhance" id="filterSource"><option value="">Источник: все</option></select>
+          <select class="select-input js-enhance" id="filterStatus"><option value="">Статус: все</option></select>
           <button class="btn btn-secondary" id="importBtn">Импорт</button>
         </div>
       </header>
-
-      <div class="filters-row" id="candidateFilters">
-        <select class="select-input js-enhance" id="filterVacancy"><option value="">Вакансия: все</option></select>
-        <select class="select-input js-enhance" id="filterStage"><option value="">Этап: все</option></select>
-        <select class="select-input js-enhance" id="filterSource"><option value="">Источник: все</option></select>
-        <select class="select-input js-enhance" id="filterStatus"><option value="">Статус: все</option></select>
-      </div>
 
       <div class="bulk-bar hidden" id="bulkBar">
         <span id="bulkCount">0 выбрано</span>
@@ -255,6 +252,8 @@
     </form>
   </div>
   <div class="modal-footer">
+    <button class="btn btn-danger hidden" id="deleteVacancyBtn">Удалить</button>
+    <button class="btn btn-secondary hidden" id="openVacancyKanbanBtn">Открыть Kanban</button>
     <button class="btn btn-secondary" data-close-modal="vacancyModal">Отмена</button>
     <button class="btn btn-primary" id="saveVacancyBtn">Сохранить</button>
   </div>
