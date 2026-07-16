@@ -241,6 +241,7 @@
       <label class="field"><span class="field-label">Руководитель отдела *</span><input type="text" id="vManager" required list="managersList" /></label>
       <datalist id="managersList"></datalist>
       <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
+      <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
       <label class="field field-full"><span class="field-label">Описание</span><textarea id="vDescription" rows="3"></textarea></label>
       <label class="field"><span class="field-label">Количество мест *</span><input type="number" id="vSlots" min="1" required /></label>
       <label class="field"><span class="field-label">Статус</span>
@@ -285,6 +286,7 @@
         <label class="field"><span class="field-label">Источник *</span>
           <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
         </label>
+        <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
         <label class="field field-full"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
         <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="cComment" rows="2"></textarea></label>
         <div class="field field-full">

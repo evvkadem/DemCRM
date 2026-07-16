@@ -355,6 +355,8 @@ select.js-enhance.enhanced { display: none; }
 .data-table tbody tr:last-child td { border-bottom: none; }
 .data-table tbody tr { transition: background var(--transition); cursor: pointer; }
 .data-table tbody tr:hover { background: var(--bg-subtle); }
+.data-table tbody tr.row-blacklisted { box-shadow: inset 3px 0 0 var(--danger); }
+.data-table tbody tr.row-blacklisted td:nth-child(2) { color: var(--danger); font-weight: 500; }
 .th-check { width: 36px; }
 
 .bulk-bar {
