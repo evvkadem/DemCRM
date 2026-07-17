@@ -51,6 +51,14 @@
 }
 
 * { box-sizing: border-box; }
+
+/* скроллбары следуют теме — используют те же переменные, поэтому
+   автоматически становятся тёмными вместе с остальным интерфейсом */
+* { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); background-clip: padding-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -165,7 +173,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   flex-direction: column;
   padding: 20px 12px;
 }
-.sidebar-logo { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; padding: 6px 10px 24px; }
+.sidebar-logo { font-weight: 600; font-size: 18px; letter-spacing: -0.02em; padding: 6px 10px 24px; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
@@ -190,8 +198,8 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   gap: 14px;
   margin-bottom: 24px;
 }
-.view-header-top { display: flex; align-items: center; min-height: 30px; }
-.view-header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 30px; }
+.view-header-top { display: flex; align-items: center; min-height: 38px; }
+.view-header h1 { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 38px; }
 .view-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; min-height: var(--control-h); }
 .search-input { width: 260px; flex-shrink: 0; }
 
@@ -275,30 +283,57 @@ select.js-enhance.enhanced { display: none; }
 .empty-state span { font-size: 13px; }
 
 /* ---------- kanban ---------- */
-.kanban-layout { display: flex; flex-direction: column; gap: 16px; height: calc(100vh - 160px); }
+.kanban-layout { display: flex; flex-direction: row; gap: 16px; height: calc(100vh - 160px); }
 .interviews-panel {
+  flex: 0 0 220px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 12px 16px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.interviews-panel-header { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500; }
-.interviews-list { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+.interviews-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 10px; font-weight: 500; flex-shrink: 0; }
+.interviews-list { display: flex; flex-direction: column; gap: 0; overflow-y: auto; padding-left: 16px; position: relative; }
 .interview-chip {
+  position: relative;
   flex-shrink: 0;
   background: var(--bg-subtle);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 12.5px;
-  min-width: 150px;
   cursor: pointer;
+  margin-bottom: 16px;
 }
+.interview-chip::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--bg-elevated);
+}
+.interview-chip::after {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 20px;
+  bottom: -16px;
+  width: 1px;
+  background: var(--border);
+}
+.interview-chip:last-child { margin-bottom: 0; }
+.interview-chip:last-child::after { display: none; }
 .interview-chip-time { font-weight: 600; margin-bottom: 2px; }
 .interview-chip-name { color: var(--text); }
 .interview-chip-phone { color: var(--text-secondary); font-size: 11.5px; }
 .interviews-empty { color: var(--text-tertiary); font-size: 12.5px; padding: 6px 2px; }
 
-.kanban-board { flex: 1; display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+.kanban-board { flex: 1; display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; min-width: 0; }
 .kanban-column {
   flex: 0 0 250px;
   background: var(--bg-subtle);
@@ -372,7 +407,7 @@ select.js-enhance.enhanced { display: none; }
 .stat-card-label { color: var(--text-secondary); font-size: 12.5px; margin-top: 4px; }
 
 .panel { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px; margin-bottom: 16px; }
-.panel-title { font-size: 14px; font-weight: 600; margin: 0 0 14px; }
+.panel-title { font-size: 17px; font-weight: 600; margin: 0 0 14px; }
 .panel-value { font-size: 22px; font-weight: 600; }
 
 .funnel-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 12.5px; }
@@ -399,7 +434,7 @@ select.js-enhance.enhanced { display: none; }
 @keyframes modalIn { from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
-.modal-header h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.modal-header h2 { font-size: 19px; font-weight: 600; margin: 0; }
 .modal-close { border: none; background: transparent; color: var(--text-secondary); font-size: 15px; width: 28px; height: 28px; border-radius: var(--radius-sm); }
 .modal-close:hover { background: var(--bg-subtle); }
 .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
@@ -416,15 +451,46 @@ select.js-enhance.enhanced { display: none; }
 
 .duplicate-warning { background: var(--danger-bg); color: var(--danger); padding: 10px 12px; border-radius: var(--radius-sm); font-size: 12.5px; }
 
+.status-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.status-badges:empty { margin-bottom: 0; }
+.status-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 500; background: var(--bg-subtle); color: var(--text-secondary); }
+.status-badge-danger { background: var(--danger-bg); color: var(--danger); }
+
+.choice-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow-y: auto; }
+.choice-item {
+  display: block; width: 100%; text-align: left; border: none; background: transparent;
+  padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text);
+}
+.choice-item:hover { background: var(--bg-subtle); }
+.choice-item.current { background: var(--bg-subtle); font-weight: 500; }
+
 .tag-picker { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-picker .tag-chip { cursor: pointer; border: 1px solid transparent; opacity: 0.55; }
 .tag-picker .tag-chip.selected { opacity: 1; border-color: currentColor; }
 
 .stage-list { display: flex; flex-direction: column; gap: 4px; }
-.stage-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--radius-sm); font-size: 13px; }
+.stage-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--radius-sm); font-size: 13px;
+  border: none; background: transparent; color: var(--text); text-align: left; width: 100%; cursor: pointer;
+  transition: background var(--transition);
+}
+.stage-item:hover { background: var(--bg-hover); }
 .stage-item.current { background: var(--bg-subtle); font-weight: 500; }
-.stage-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); }
+.stage-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); flex-shrink: 0; }
 .stage-item.current .stage-dot { background: var(--accent); }
+
+.readonly-box {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  height: var(--control-h);
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.info-subsection { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.info-subsection > .field-label { display: block; margin-bottom: 10px; }
 
 .interview-form-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .interview-history, .notes-list, .history-list { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; }

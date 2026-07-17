@@ -43,17 +43,20 @@ const STAGE_NO_AUTOTRANSFER = ["Отобрано", "Собеседование �
 const AUTOTRANSFER_DAYS = 7;
 const NOSHOW_LIMIT = 3;
 
-const SYSTEM_TAGS = ["не вышел на связь", "чёрный список", "не подходит", "не актуально"];
+const SYSTEM_TAGS = ["не вышел на связь", "чёрный список", "не подходит", "не актуально", "не пришёл на собеседование"];
 
 // теги, которые при добавлении кандидату автоматически убирают его с Kanban
 // (кандидат остаётся в базе). «чёрный список» дополнительно подсвечивает
 // строку в таблице базы кандидатов другим цветом (см. renderCandidatesTable).
-const KANBAN_REMOVE_TAGS = new Set(["не вышел на связь", "чёрный список", "не подходит", "не актуально"]);
+const KANBAN_REMOVE_TAGS = new Set([
+  "не вышел на связь", "чёрный список", "не подходит", "не актуально", "не пришёл на собеседование",
+]);
 // для части тегов заодно проставляем понятный статус в базе кандидатов
 const TAG_STATUS_MAP = {
   "не вышел на связь": "не вышел на связь",
   "не подходит": "не подходит",
-  "не актуально": "не подходит",
+  "чёрный список": "чёрный список",
+  "не актуально": "не актуально",
 };
 
 const state = {
@@ -117,6 +120,25 @@ $("#confirmCancelBtn").addEventListener("click", () => {
   closeModal("confirmModal");
   state.confirmCallback = null;
 });
+
+// модалка выбора одного значения из списка — замена браузерным prompt()
+// options: [{ value, label, current }]
+function openChoiceModal(title, options, onSelect) {
+  $("#choiceModalTitle").textContent = title;
+  const list = $("#choiceList");
+  list.innerHTML = "";
+  options.forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.className = "choice-item" + (opt.current ? " current" : "");
+    btn.textContent = opt.label;
+    btn.addEventListener("click", () => {
+      closeModal("choiceModal");
+      onSelect(opt.value);
+    });
+    list.appendChild(btn);
+  });
+  openModal("choiceModal");
+}
 
 // формат телефона -> 7 999 999-99-99
 function formatPhone(raw) {
@@ -236,7 +258,7 @@ function renderVacancies() {
   const grid = $("#vacancyGrid");
   const search = $("#vacancySearch").value.trim().toLowerCase();
   const list = Object.entries(state.vacancies)
-    .filter(([id, v]) => (vacancyFilterMode === "all" ? true : v.status === "active"))
+    .filter(([id, v]) => (vacancyFilterMode === "all" ? true : v.status === vacancyFilterMode))
     .filter(([id, v]) => !search || v.title.toLowerCase().includes(search) || (v.manager || "").toLowerCase().includes(search))
     .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
 
@@ -272,21 +294,66 @@ function escapeHtml(str) {
 }
 
 $("#vacancySearch").addEventListener("input", renderVacancies);
-$("#vacancyFilter").addEventListener("click", (e) => {
-  const btn = e.target.closest(".segmented-item");
-  if (!btn) return;
-  $all("#vacancyFilter .segmented-item").forEach((b) => b.classList.remove("active"));
-  btn.classList.add("active");
-  vacancyFilterMode = btn.dataset.filter;
+$("#vacancyFilter").addEventListener("change", (e) => {
+  vacancyFilterMode = e.target.value;
   renderVacancies();
 });
 
 let editingVacancyId = null;
 
+// справочник руководителей строится из уже введённых вакансий: имя -> последние
+// известные телефон/внутренний номер. Отдельной формы управления справочником
+// не заводим — он просто "запоминает" данные при сохранении вакансии.
+function getManagersDirectory() {
+  const map = {};
+  Object.values(state.vacancies).forEach((v) => {
+    if (!v.manager) return;
+    map[v.manager] = {
+      phone: v.managerPhone || map[v.manager]?.phone || "",
+      internalPhone: v.internalPhone || map[v.manager]?.internalPhone || "",
+    };
+  });
+  return map;
+}
+
+function populateManagerSelect(selectedName) {
+  const sel = $("#vManager");
+  const dir = getManagersDirectory();
+  const names = Object.keys(dir).sort((a, b) => a.localeCompare(b, "ru"));
+  sel.innerHTML = names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("") +
+    `<option value="__new__">+ Новый руководитель</option>`;
+  sel.value = selectedName && dir[selectedName] ? selectedName : (names[0] || "__new__");
+  refreshCustomSelect(sel);
+  toggleManagerNewField();
+  if (dir[sel.value]) {
+    $("#vManagerPhone").value = formatPhone(dir[sel.value].phone || "");
+    $("#vInternalPhone").value = dir[sel.value].internalPhone || "";
+  }
+}
+
+function toggleManagerNewField() {
+  const isNew = $("#vManager").value === "__new__";
+  $("#vManagerNewWrap").classList.toggle("hidden", !isNew);
+}
+
+$("#vManager").addEventListener("change", () => {
+  toggleManagerNewField();
+  const dir = getManagersDirectory();
+  const entry = dir[$("#vManager").value];
+  if (entry) {
+    $("#vManagerPhone").value = formatPhone(entry.phone || "");
+    $("#vInternalPhone").value = entry.internalPhone || "";
+  } else {
+    $("#vManagerPhone").value = "";
+    $("#vInternalPhone").value = "";
+  }
+});
+
 $("#addVacancyBtn").addEventListener("click", () => {
   editingVacancyId = null;
   $("#vacancyModalTitle").textContent = "Новая вакансия";
   $("#vacancyForm").reset();
+  populateManagerSelect(null);
   refreshCustomSelect($("#vStatus"));
   $("#vOpenDate").value = new Date().toISOString().slice(0, 10);
   $("#deleteVacancyBtn").classList.add("hidden");
@@ -300,10 +367,9 @@ function openVacancyEditModal(id) {
   editingVacancyId = id;
   $("#vacancyModalTitle").textContent = v.title;
   $("#vTitle").value = v.title || "";
-  $("#vManager").value = v.manager || "";
+  populateManagerSelect(v.manager);
   $("#vManagerPhone").value = formatPhone(v.managerPhone || "");
   $("#vInternalPhone").value = v.internalPhone || "";
-  $("#vDescription").value = v.description || "";
   $("#vSlots").value = v.slots || 1;
   $("#vStatus").value = v.status || "active";
   refreshCustomSelect($("#vStatus"));
@@ -337,14 +403,14 @@ $("#deleteVacancyBtn").addEventListener("click", () => {
 
 $("#saveVacancyBtn").addEventListener("click", async () => {
   const title = $("#vTitle").value.trim();
-  const manager = $("#vManager").value.trim();
+  const isNewManager = $("#vManager").value === "__new__";
+  const manager = isNewManager ? $("#vManagerNewName").value.trim() : $("#vManager").value;
   if (!title || !manager) { toast("Заполните обязательные поля", true); return; }
   const payload = {
     title,
     manager,
     managerPhone: formatPhone($("#vManagerPhone").value),
     internalPhone: $("#vInternalPhone").value.trim(),
-    description: $("#vDescription").value.trim(),
     slots: Number($("#vSlots").value) || 1,
     status: $("#vStatus").value,
     openDate: $("#vOpenDate").value,
@@ -365,12 +431,6 @@ $("#saveVacancyBtn").addEventListener("click", async () => {
     toast("Ошибка сохранения: " + err.message, true);
   }
 });
-
-function updateManagersList() {
-  const dl = $("#managersList");
-  const names = [...new Set(Object.values(state.vacancies).map((v) => v.manager).filter(Boolean))];
-  dl.innerHTML = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
-}
 
 // ----------------------------------------------------------------
 // 6. KANBAN
@@ -487,19 +547,8 @@ function sourceLabel(src) {
 async function handleStageDrop(candidateId, newStage) {
   const c = state.candidates[candidateId];
   if (!c || c.stage === newStage) return;
-
-  const doMove = async () => {
-    await dbUpdate(`candidates/${candidateId}`, { stage: newStage, stageChangedAt: nowISO() });
-    await logHistory(candidateId, `Этап изменён: ${c.stage} → ${newStage}`);
-  };
-
-  // проверка анкеты при переходе Собеседование -> Отобрано
-  if (c.stage === "Собеседование" && newStage === "Отобрано" && !c.formLink) {
-    confirmAction("Анкета кандидата не загружена. Продолжить перевод без анкеты?", doMove);
-    return;
-  }
-
-  await doMove();
+  await dbUpdate(`candidates/${candidateId}`, { stage: newStage, stageChangedAt: nowISO() });
+  await logHistory(candidateId, `Этап изменён: ${c.stage} → ${newStage}`);
 }
 
 // панель собеседований (по датам)
@@ -573,14 +622,13 @@ function openCandidateModal(candidateId, activeTab = "info") {
   refreshCustomSelect($("#cVacancy"));
   refreshCustomSelect($("#cSource"));
   $("#cResumeLink").value = c?.resumeLink || "";
-  $("#cComment").value = c?.comment || "";
   $("#cCreatedAt").value = c?.createdAt ? new Date(c.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
+  renderStatusBadges(c);
   renderTagPicker(c?.tags || {});
   renderStageTab(c);
   renderInterviewsTab(c, candidateId);
-  $("#docResumeLink").value = c?.resumeLink || "";
-  $("#docFormLink").value = c?.formLink || "";
+  renderInfoInterviewsList(c);
   renderNotesTab(c);
   renderHistoryTab(c);
 
@@ -597,6 +645,32 @@ $("#candidateTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".modal-tab");
   if (btn) switchCandidateTab(btn.dataset.tab);
 });
+
+const STATUS_BADGE_COLOR = {
+  "не вышел на связь": "#c9a24a",
+  "чёрный список": "#333333",
+  "не подходит": "#a85c5c",
+  "не актуально": "#8a8a8e",
+  "трудоустроен": "#3f7d54",
+  "уволен": "#a85c5c",
+};
+
+// плашки статуса и "не подходит на вакансию X" — видны сразу на вкладке
+// "Основная информация", не только всплывают при повторном отклике
+function renderStatusBadges(c) {
+  const box = $("#statusBadges");
+  if (!c) { box.innerHTML = ""; return; }
+  const badges = [];
+  if (c.status && c.status !== "активный") {
+    const color = STATUS_BADGE_COLOR[c.status] || "#8a8a8e";
+    badges.push(`<span class="status-badge" style="background:${color}22;color:${color}">${escapeHtml(c.status)}</span>`);
+  }
+  Object.keys(c.rejectedVacancies || {}).forEach((vId) => {
+    const title = state.vacancies[vId]?.title || "вакансию";
+    badges.push(`<span class="status-badge status-badge-danger">не подходит на вакансию: ${escapeHtml(title)}</span>`);
+  });
+  box.innerHTML = badges.join("");
+}
 
 function renderTagPicker(selectedTags) {
   const wrap = $("#cTagPicker");
@@ -620,9 +694,19 @@ function renderTagPicker(selectedTags) {
 function renderStageTab(c) {
   const list = $("#stageList");
   list.innerHTML = STAGES.map((stage) => `
-    <div class="stage-item ${c && c.stage === stage ? "current" : ""}">
+    <button type="button" class="stage-item ${c && c.stage === stage ? "current" : ""}" data-stage="${escapeHtml(stage)}">
       <span class="stage-dot"></span><span>${stage}</span>
-    </div>`).join("");
+    </button>`).join("");
+
+  if (c) {
+    $all(".stage-item", list).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (btn.dataset.stage === c.stage) return;
+        await handleStageDrop(state.currentCandidateId, btn.dataset.stage);
+        renderStageTab(state.candidates[state.currentCandidateId]);
+      });
+    });
+  }
 
   // ручной переключатель "на Kanban / только в базе" — независим от этапа
   if (c) {
@@ -659,11 +743,41 @@ function renderStageTab(c) {
     $("#saveEmploymentDateBtn", box).addEventListener("click", async () => {
       const val = $("#employmentDateInput", box).value;
       if (!val) { toast("Укажите дату трудоустройства", true); return; }
-      await dbUpdate(`candidates/${state.currentCandidateId}`, { employmentDate: val, status: "трудоустроен" });
-      await logHistory(state.currentCandidateId, `Дата трудоустройства: ${formatDate(val)}`);
+      await dbUpdate(`candidates/${state.currentCandidateId}`, { employmentDate: val, status: "трудоустроен", onKanban: false });
+      await logHistory(state.currentCandidateId, `Дата трудоустройства: ${formatDate(val)} — убран с Kanban`);
       toast("Кандидат трудоустроен — убран с Kanban");
       closeModal("candidateModal");
     });
+
+    // как только дата трудоустройства сохранена — можно оформить увольнение
+    if (c.employmentDate) {
+      const fireBox = document.createElement("div");
+      fireBox.style.marginTop = "16px";
+      if (c.status === "уволен") {
+        fireBox.innerHTML = `<div class="readonly-box">Уволен: ${formatDate(c.terminationDate)}</div>`;
+      } else {
+        fireBox.innerHTML = `
+          <label class="field">
+            <span class="field-label">Дата увольнения</span>
+            <input type="date" id="terminationDateInput" />
+          </label>
+          <button class="btn btn-danger btn-tiny" id="saveTerminationBtn">Уволить</button>
+        `;
+      }
+      list.appendChild(fireBox);
+      const saveBtn = $("#saveTerminationBtn", fireBox);
+      if (saveBtn) {
+        saveBtn.addEventListener("click", async () => {
+          const val = $("#terminationDateInput", fireBox).value;
+          if (!val) { toast("Укажите дату увольнения", true); return; }
+          await dbUpdate(`candidates/${state.currentCandidateId}`, { status: "уволен", terminationDate: val });
+          await logHistory(state.currentCandidateId, `Уволен: ${formatDate(val)}`);
+          toast("Статус изменён на «уволен»");
+          renderStageTab(state.candidates[state.currentCandidateId]);
+          renderStatusBadges(state.candidates[state.currentCandidateId]);
+        });
+      }
+    }
   }
 }
 
@@ -722,6 +836,7 @@ $("#addInterviewBtn").addEventListener("click", async () => {
   $("#newInterviewComment").value = "";
   renderInterviewsTab(state.candidates[candidateId], candidateId);
   renderStageTab(state.candidates[candidateId]);
+  renderInfoInterviewsList(state.candidates[candidateId]);
   toast("Собеседование назначено");
 });
 
@@ -732,18 +847,20 @@ async function setInterviewResult(candidateId, ivId, result) {
 
   if (result === "noshow") {
     const newCount = (c.noShowCount || 0) + 1;
-    await dbUpdate(`candidates/${candidateId}`, { noShowCount: newCount, onKanban: false });
-    await logHistory(candidateId, "Убран с Kanban (не пришёл на собеседование)");
+    await dbUpdate(`candidates/${candidateId}`, { noShowCount: newCount });
+    await addSystemTagToCandidate(candidateId, "не пришёл на собеседование");
     if (newCount >= NOSHOW_LIMIT) {
       await addSystemTagToCandidate(candidateId, "чёрный список");
       toast("Кандидат добавлен в чёрный список (3 неявки)");
     }
   } else if (result === "fail") {
-    await dbUpdate(`candidates/${candidateId}`, { status: "не подходит", onKanban: false });
-    await logHistory(candidateId, "Убран с Kanban (не прошёл собеседование)");
+    await addSystemTagToCandidate(candidateId, "не подходит");
   }
   renderInterviewsTab(state.candidates[candidateId], candidateId);
   renderStageTab(state.candidates[candidateId]);
+  renderInfoInterviewsList(state.candidates[candidateId]);
+  renderTagPicker(state.candidates[candidateId]?.tags || {});
+  renderStatusBadges(state.candidates[candidateId]);
   toast("Результат сохранён");
 }
 
@@ -751,7 +868,7 @@ async function ensureSystemTags() {
   for (const name of SYSTEM_TAGS) {
     const exists = Object.values(state.tags).some((t) => t.name === name);
     if (!exists) {
-      const colors = { "не вышел на связь": "#c9a24a", "чёрный список": "#333333", "не подходит": "#a85c5c", "не актуально": "#8a8a8e" };
+      const colors = { "не вышел на связь": "#c9a24a", "чёрный список": "#333333", "не подходит": "#a85c5c", "не актуально": "#8a8a8e", "не пришёл на собеседование": "#b5793f" };
       await dbPush("tags", { name, color: colors[name] || "#999999" });
     }
   }
@@ -762,8 +879,14 @@ async function ensureSystemTags() {
 // тег — карточка кандидата, массовое действие, автоматика чёрного списка.
 async function applyTagAutomation(candidateId, tagName) {
   if (!KANBAN_REMOVE_TAGS.has(tagName)) return;
+  const c = state.candidates[candidateId];
   const updates = { onKanban: false };
   if (TAG_STATUS_MAP[tagName]) updates.status = TAG_STATUS_MAP[tagName];
+  // "не подходит" запоминает конкретную вакансию — чтобы при повторном
+  // отклике на неё же показать предупреждение (см. findDuplicateCandidate)
+  if (tagName === "не подходит" && c?.vacancyId) {
+    updates.rejectedVacancies = { ...(c.rejectedVacancies || {}), [c.vacancyId]: true };
+  }
   await dbUpdate(`candidates/${candidateId}`, updates);
   await logHistory(candidateId, `Автоматически убран с Kanban (тег «${tagName}»)`);
 }
@@ -775,16 +898,18 @@ async function addSystemTagToCandidate(candidateId, tagName) {
   await applyTagAutomation(candidateId, tagName);
 }
 
-$("#saveDocsBtn").addEventListener("click", async () => {
-  const candidateId = state.currentCandidateId;
-  if (!candidateId) { toast("Сначала сохраните кандидата", true); return; }
-  await dbUpdate(`candidates/${candidateId}`, {
-    resumeLink: $("#docResumeLink").value.trim(),
-    formLink: $("#docFormLink").value.trim(),
-  });
-  await logHistory(candidateId, "Обновлены ссылки на документы");
-  toast("Документы сохранены");
-});
+function renderInfoInterviewsList(c) {
+  const box = $("#infoInterviewsList");
+  if (!c || !c.interviews || !Object.keys(c.interviews).length) {
+    box.innerHTML = `<div class="interviews-empty">Собеседований пока нет</div>`;
+    return;
+  }
+  const resultLabel = { pass: "прошёл дальше", fail: "не подходит", noshow: "не пришёл", "": "ожидает" };
+  box.innerHTML = Object.values(c.interviews)
+    .sort((a, b) => new Date(`${b.date}T${b.time || "00:00"}`) - new Date(`${a.date}T${a.time || "00:00"}`))
+    .map((iv) => `<div class="interview-row"><strong>${formatDate(iv.date)} ${iv.time || ""}</strong> — ${resultLabel[iv.result || ""]}${iv.comment ? `<div>${escapeHtml(iv.comment)}</div>` : ""}</div>`)
+    .join("");
+}
 
 function renderNotesTab(c) {
   const box = $("#notesList");
@@ -839,8 +964,16 @@ $("#saveCandidateBtn").addEventListener("click", async () => {
   const pDigits = phoneDigits(phoneRaw);
   const dup = findDuplicateCandidate(name, pDigits, state.currentCandidateId);
   if (dup && !state.currentCandidateId) {
-    $("#duplicateWarning").classList.remove("hidden");
-    openCandidateModal(dup[0]);
+    const [dupId, dupData] = dup;
+    const warnBox = $("#duplicateWarning");
+    if (dupData.rejectedVacancies?.[vacancyId]) {
+      const vacancyTitle = state.vacancies[vacancyId]?.title || "эту вакансию";
+      warnBox.textContent = `Кандидат уже отмечен «не подходит» на вакансию «${vacancyTitle}».`;
+    } else {
+      warnBox.textContent = "Кандидат с таким телефоном или ФИО уже существует.";
+    }
+    warnBox.classList.remove("hidden");
+    openCandidateModal(dupId);
     toast("Кандидат уже существует — открыта существующая карточка");
     return;
   }
@@ -855,7 +988,6 @@ $("#saveCandidateBtn").addEventListener("click", async () => {
   const payload = {
     name, phone: pDigits, vacancyId, source,
     resumeLink: $("#cResumeLink").value.trim(),
-    comment: $("#cComment").value.trim(),
     tags: tagsObj,
     createdAt: createdAtValue,
   };
@@ -918,7 +1050,7 @@ function populateCandidateFilters() {
   const statSel = $("#filterStatus");
   const keepStat = statSel.value;
   statSel.innerHTML = `<option value="">Статус: все</option>` +
-    ["активный", "трудоустроен", "не вышел на связь", "не подходит"].map((s) => `<option value="${s}">${s}</option>`).join("");
+    ["активный", "трудоустроен", "не вышел на связь", "не подходит", "чёрный список", "не актуально"].map((s) => `<option value="${s}">${s}</option>`).join("");
   statSel.value = keepStat;
 }
 
@@ -953,6 +1085,9 @@ function renderCandidatesTable() {
       if (!t) return "";
       return `<span class="tag-chip" style="background:${t.color}22;color:${t.color}">${escapeHtml(t.name)}</span>`;
     }).join(" ");
+    const rejectedBadges = Object.keys(c.rejectedVacancies || {}).map((vId) =>
+      `<span class="status-badge status-badge-danger">не подходит: ${escapeHtml(state.vacancies[vId]?.title || "—")}</span>`
+    ).join(" ");
     tr.innerHTML = `
       <td class="th-check"><input type="checkbox" class="row-check" data-id="${id}" ${state.selectedCandidateIds.has(id) ? "checked" : ""} /></td>
       <td>${escapeHtml(c.name)}</td>
@@ -962,7 +1097,7 @@ function renderCandidatesTable() {
       <td>${sourceLabel(c.source)}</td>
       <td>${formatDate(c.createdAt)}</td>
       <td>${tagsHtml}</td>
-      <td>${escapeHtml(c.status || "—")}</td>
+      <td>${escapeHtml(c.status || "—")}${rejectedBadges ? `<br>${rejectedBadges}` : ""}</td>
     `;
     $(".row-check", tr).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1024,55 +1159,68 @@ async function openBulkReturnFlow(defaultVacancyId) {
 }
 
 $("#bulkStageBtn").addEventListener("click", () => {
-  const numbered = STAGES.map((s, i) => `${i + 1}. ${s}`).join("\n");
-  const input = prompt(`Введите номер этапа:\n${numbered}`);
-  if (!input) return;
-  const idx = Number(input.trim()) - 1;
-  if (idx < 0 || idx >= STAGES.length) { toast("Некорректный номер этапа", true); return; }
-  const newStage = STAGES[idx];
-  (async () => {
-    for (const id of state.selectedCandidateIds) {
-      const c = state.candidates[id];
-      await dbUpdate(`candidates/${id}`, { stage: newStage, stageChangedAt: nowISO(), onKanban: true, employmentDate: null });
-      await logHistory(id, `Этап изменён вручную из базы: ${c?.stage || "—"} → ${newStage}`);
-    }
-    state.selectedCandidateIds.clear();
-    updateBulkBar();
-    toast("Этап обновлён у выбранных кандидатов");
-  })();
+  if (!state.selectedCandidateIds.size) return;
+  openChoiceModal("Изменить этап", STAGES.map((s) => ({ value: s, label: s })), (newStage) => {
+    (async () => {
+      for (const id of state.selectedCandidateIds) {
+        const c = state.candidates[id];
+        await dbUpdate(`candidates/${id}`, { stage: newStage, stageChangedAt: nowISO(), onKanban: true, employmentDate: null });
+        await logHistory(id, `Этап изменён вручную из базы: ${c?.stage || "—"} → ${newStage}`);
+      }
+      state.selectedCandidateIds.clear();
+      updateBulkBar();
+      toast("Этап обновлён у выбранных кандидатов");
+    })();
+  });
 });
 
 $("#bulkVacancyBtn").addEventListener("click", () => {
-  const title = prompt("Введите точное название вакансии, в которую перенести выбранных кандидатов:");
-  if (!title) return;
-  const entry = Object.entries(state.vacancies).find(([id, v]) => v.title === title);
-  if (!entry) { toast("Вакансия не найдена", true); return; }
-  (async () => {
-    for (const id of state.selectedCandidateIds) {
-      await dbUpdate(`candidates/${id}`, { vacancyId: entry[0] });
-      await logHistory(id, `Вакансия изменена на: ${title}`);
-    }
-    state.selectedCandidateIds.clear();
-    updateBulkBar();
-    toast("Вакансия обновлена у выбранных кандидатов");
-  })();
+  if (!state.selectedCandidateIds.size) return;
+  const options = Object.entries(state.vacancies).map(([id, v]) => ({ value: id, label: v.title }));
+  if (!options.length) { toast("Нет ни одной вакансии", true); return; }
+  openChoiceModal("Изменить вакансию", options, (vacancyId) => {
+    (async () => {
+      const title = state.vacancies[vacancyId]?.title || "";
+      for (const id of state.selectedCandidateIds) {
+        await dbUpdate(`candidates/${id}`, { vacancyId });
+        await logHistory(id, `Вакансия изменена на: ${title}`);
+      }
+      state.selectedCandidateIds.clear();
+      updateBulkBar();
+      toast("Вакансия обновлена у выбранных кандидатов");
+    })();
+  });
 });
 
 $("#bulkTagBtn").addEventListener("click", () => {
-  const tagNames = Object.values(state.tags).map((t) => t.name).join(", ");
-  const name = prompt(`Введите название тега для добавления (доступны: ${tagNames}):`);
-  if (!name) return;
-  const entry = Object.entries(state.tags).find(([id, t]) => t.name === name);
-  if (!entry) { toast("Тег не найден", true); return; }
-  (async () => {
+  if (!state.selectedCandidateIds.size) return;
+  const options = Object.entries(state.tags).map(([id, t]) => ({ value: id, label: t.name }));
+  if (!options.length) { toast("Нет ни одного тега", true); return; }
+  openChoiceModal("Добавить тег", options, (tagId) => {
+    (async () => {
+      const tagName = state.tags[tagId]?.name;
+      for (const id of state.selectedCandidateIds) {
+        await dbUpdate(`candidates/${id}/tags`, { [tagId]: true });
+        await applyTagAutomation(id, tagName);
+      }
+      state.selectedCandidateIds.clear();
+      updateBulkBar();
+      toast("Тег добавлен выбранным кандидатам");
+    })();
+  });
+});
+
+$("#bulkKanbanOffBtn").addEventListener("click", () => {
+  if (!state.selectedCandidateIds.size) return;
+  confirmAction(`Убрать ${state.selectedCandidateIds.size} кандидатов с Kanban? Они останутся в базе.`, async () => {
     for (const id of state.selectedCandidateIds) {
-      await dbUpdate(`candidates/${id}/tags`, { [entry[0]]: true });
-      await applyTagAutomation(id, entry[1].name);
+      await dbUpdate(`candidates/${id}`, { onKanban: false });
+      await logHistory(id, "Вручную убран с Kanban (массовое действие)");
     }
     state.selectedCandidateIds.clear();
     updateBulkBar();
-    toast("Тег добавлен выбранным кандидатам");
-  })();
+    toast("Кандидаты убраны с Kanban");
+  });
 });
 
 // ----------------------------------------------------------------
@@ -1250,13 +1398,18 @@ $("#addTagBtn").addEventListener("click", async () => {
 // ----------------------------------------------------------------
 
 let analyticsPeriod = "month";
+let analyticsScopeInitialized = false;
 
+// пересобираем список вакансий в дропдауне только когда реально меняются
+// вакансии, а не на каждое обновление кандидатов — иначе кастомный дропдаун
+// дёргался на каждый чих.
 function populateAnalyticsScope() {
   const sel = $("#analyticsScope");
   const keep = sel.value;
   sel.innerHTML = `<option value="all">Вся CRM</option>` +
     Object.entries(state.vacancies).map(([id, v]) => `<option value="${id}">${escapeHtml(v.title)}</option>`).join("");
-  sel.value = keep || "all";
+  sel.value = state.vacancies[keep] ? keep : "all";
+  refreshCustomSelect(sel);
 }
 
 $("#analyticsPeriod").addEventListener("click", (e) => {
@@ -1269,7 +1422,9 @@ $("#analyticsPeriod").addEventListener("click", (e) => {
 });
 $("#analyticsScope").addEventListener("change", renderAnalytics);
 
-function periodStartDate() {
+// границы периода: [start, now]. "День" — последние сутки, и так далее —
+// скользящее окно, а не календарные границы.
+function periodStart() {
   const d = new Date();
   if (analyticsPeriod === "day") d.setDate(d.getDate() - 1);
   else if (analyticsPeriod === "week") d.setDate(d.getDate() - 7);
@@ -1278,33 +1433,63 @@ function periodStartDate() {
   return d;
 }
 
+function inPeriod(dateLike, start) {
+  if (!dateLike) return false;
+  const d = new Date(dateLike);
+  return !isNaN(d) && d >= start && d <= new Date();
+}
+
+// дата заполнения вакансии — дата, когда трудоустроенных кандидатов набралось
+// столько, сколько указано в "количество мест" (тз 3.6). Если мест ещё не
+// набрано — вакансия считается незакрытой, в среднее не попадает.
+function vacancyFillDate(vacancyId) {
+  const v = state.vacancies[vacancyId];
+  if (!v || !v.slots) return null;
+  const employedDates = Object.values(state.candidates)
+    .filter((c) => c.vacancyId === vacancyId && c.employmentDate)
+    .map((c) => c.employmentDate)
+    .sort();
+  if (employedDates.length < v.slots) return null;
+  return employedDates[v.slots - 1];
+}
+
 function renderAnalytics() {
-  populateAnalyticsScope();
-  const scope = $("#analyticsScope").value;
-  const start = periodStartDate();
+  if (!analyticsScopeInitialized) { populateAnalyticsScope(); analyticsScopeInitialized = true; }
+  const scope = $("#analyticsScope").value || "all";
+  const start = periodStart();
 
-  const candidates = Object.values(state.candidates).filter((c) => {
-    if (scope !== "all" && c.vacancyId !== scope) return false;
-    return !c.createdAt || new Date(c.createdAt) >= start;
+  const inScope = (c) => scope === "all" || c.vacancyId === scope;
+  const allScopedCandidates = Object.values(state.candidates).filter(inScope);
+
+  // "новых кандидатов за период" — по дате добавления
+  const newCandidates = allScopedCandidates.filter((c) => inPeriod(c.createdAt, start));
+  // "трудоустроено за период" — по факту даты трудоустройства, а не по дате создания карточки
+  const employedInPeriod = allScopedCandidates.filter((c) => c.employmentDate && inPeriod(c.employmentDate, start));
+  // "собеседований за период" — по датам самих собеседований, а не по дате создания кандидата
+  let interviewsInPeriod = 0;
+  allScopedCandidates.forEach((c) => {
+    Object.values(c.interviews || {}).forEach((iv) => { if (inPeriod(iv.date, start)) interviewsInPeriod++; });
   });
-
-  const totalCandidates = candidates.length;
-  const activeVacancies = Object.values(state.vacancies).filter((v) => v.status === "active" && (scope === "all" || true)).length;
-  const employed = candidates.filter((c) => c.employmentDate).length;
-  const interviewsCount = candidates.reduce((acc, c) => acc + Object.keys(c.interviews || {}).length, 0);
+  const activeVacancies = Object.entries(state.vacancies).filter(
+    ([id, v]) => v.status === "active" && (scope === "all" || id === scope)
+  ).length;
 
   $("#statGrid").innerHTML = [
-    ["Всего кандидатов", totalCandidates],
+    ["Новых кандидатов", newCandidates.length],
     ["Активные вакансии", activeVacancies],
-    ["Трудоустроено", employed],
-    ["Собеседования", interviewsCount],
+    ["Трудоустроено", employedInPeriod.length],
+    ["Собеседования", interviewsInPeriod],
   ].map(([label, value]) => `
     <div class="stat-card"><div class="stat-card-value">${value}</div><div class="stat-card-label">${label}</div></div>
   `).join("");
 
-  // воронка
-  const funnelCounts = STAGES.map((stage) => candidates.filter((c) => STAGES.indexOf(c.stage) >= STAGES.indexOf(stage)).length);
-  const max = funnelCounts[0] || 1;
+  // воронка — по кандидатам, добавленным в этом периоде: сколько дошли
+  // до каждого этапа или дальше (кумулятивно)
+  const funnelBase = newCandidates;
+  const funnelCounts = STAGES.map((stage) =>
+    funnelBase.filter((c) => STAGES.indexOf(c.stage) >= STAGES.indexOf(stage)).length
+  );
+  const max = funnelCounts[0] || 0;
   $("#funnel").innerHTML = STAGES.map((stage, i) => `
     <div class="funnel-row">
       <span class="funnel-label">${stage}</span>
@@ -1313,13 +1498,23 @@ function renderAnalytics() {
     </div>
   `).join("");
 
-  // среднее время закрытия вакансии
-  const closedVacancies = Object.values(state.vacancies).filter((v) => v.status === "closed" && v.openDate && v.closeDate);
-  if (closedVacancies.length) {
-    const avgDays = closedVacancies.reduce((acc, v) => acc + daysBetween(v.openDate, v.closeDate), 0) / closedVacancies.length;
-    $("#avgCloseTime").textContent = `${Math.round(avgDays)} дн.`;
+  // среднее время закрытия вакансии — от даты открытия до даты, когда
+  // фактически набралось нужное количество трудоустроенных (тз 3.6),
+  // с учётом выбранной вакансии/периода
+  const vacancyIdsInScope = scope === "all" ? Object.keys(state.vacancies) : [scope];
+  const fillDurations = [];
+  vacancyIdsInScope.forEach((id) => {
+    const v = state.vacancies[id];
+    if (!v || !v.openDate) return;
+    const fillDate = vacancyFillDate(id);
+    if (!fillDate || !inPeriod(fillDate, start)) return;
+    fillDurations.push(daysBetween(v.openDate, fillDate));
+  });
+  if (fillDurations.length) {
+    const avgDays = fillDurations.reduce((a, b) => a + b, 0) / fillDurations.length;
+    $("#avgCloseTime").textContent = `${Math.round(avgDays)} дн. (по ${fillDurations.length} ${fillDurations.length === 1 ? "вакансии" : "вакансиям"})`;
   } else {
-    $("#avgCloseTime").textContent = "нет закрытых вакансий за период";
+    $("#avgCloseTime").textContent = "нет полностью укомплектованных вакансий за период";
   }
 }
 
@@ -1426,7 +1621,7 @@ async function runAutomationChecks() {
     if (c.onKanban === false) continue;
     const days = daysBetween(c.stageChangedAt, new Date(now).toISOString());
     if (days >= AUTOTRANSFER_DAYS) {
-      await dbUpdate(`candidates/${id}`, { status: "не вышел на связь", onKanban: false });
+      await addSystemTagToCandidate(id, "не вышел на связь");
       await logHistory(id, `Автоматически убран с Kanban (более ${AUTOTRANSFER_DAYS} дней на этапе «${c.stage}»)`);
     }
   }
@@ -1492,11 +1687,16 @@ function initListeners() {
 
   dbListen("vacancies", (data) => {
     state.vacancies = data || {};
-    updateManagersList();
     if ($("#view-vacancies") && !$("#view-vacancies").classList.contains("hidden")) renderVacancies();
     if (!$("#view-kanban").classList.contains("hidden")) {
       populateKanbanScope();
       renderKanban();
+    }
+    if (!$("#view-analytics").classList.contains("hidden")) {
+      populateAnalyticsScope();
+      renderAnalytics();
+    } else {
+      analyticsScopeInitialized = false;
     }
   });
 

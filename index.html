@@ -86,10 +86,12 @@
         </div>
         <div class="view-header-actions">
           <input type="search" class="search-input" id="vacancySearch" placeholder="Поиск по названию или руководителю" />
-          <div class="segmented" id="vacancyFilter">
-            <button class="segmented-item active" data-filter="active">Активные</button>
-            <button class="segmented-item" data-filter="all">Все</button>
-          </div>
+          <select class="select-input js-enhance" id="vacancyFilter">
+            <option value="active" selected>Статус: активные</option>
+            <option value="paused">Статус: приостановленные</option>
+            <option value="closed">Статус: закрытые</option>
+            <option value="all">Статус: все</option>
+          </select>
           <button class="btn btn-primary" id="addVacancyBtn">+ Добавить вакансию</button>
         </div>
       </header>
@@ -140,7 +142,7 @@
           <select class="select-input js-enhance" id="filterStage"><option value="">Этап: все</option></select>
           <select class="select-input js-enhance" id="filterSource"><option value="">Источник: все</option></select>
           <select class="select-input js-enhance" id="filterStatus"><option value="">Статус: все</option></select>
-          <button class="btn btn-secondary" id="importBtn">Импорт</button>
+          <button class="btn btn-primary" id="importBtn">+ Импорт</button>
         </div>
       </header>
 
@@ -149,6 +151,7 @@
         <button class="btn btn-tiny" id="bulkTagBtn">Добавить тег</button>
         <button class="btn btn-tiny" id="bulkStageBtn">Изменить этап</button>
         <button class="btn btn-tiny" id="bulkVacancyBtn">Изменить вакансию</button>
+        <button class="btn btn-tiny" id="bulkKanbanOffBtn">Убрать с Kanban</button>
         <button class="btn btn-tiny" id="bulkReturnBtn">Вернуть в Kanban</button>
         <button class="btn btn-tiny btn-danger" id="bulkDeleteBtn">Удалить</button>
       </div>
@@ -239,17 +242,24 @@
   <div class="modal-body">
     <form id="vacancyForm" class="form-grid">
       <label class="field field-full"><span class="field-label">Название вакансии *</span><input type="text" id="vTitle" required /></label>
-      <label class="field"><span class="field-label">Руководитель отдела *</span><input type="text" id="vManager" required list="managersList" /></label>
-      <datalist id="managersList"></datalist>
-      <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
-      <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
-      <label class="field field-full"><span class="field-label">Описание</span><textarea id="vDescription" rows="3"></textarea></label>
-      <label class="field"><span class="field-label">Количество мест *</span><input type="number" id="vSlots" min="1" required /></label>
-      <label class="field"><span class="field-label">Статус</span>
-        <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
+
+      <label class="field"><span class="field-label">Руководитель отдела *</span>
+        <select id="vManager" class="js-enhance" required></select>
       </label>
+      <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
+      <label class="field field-full hidden" id="vManagerNewWrap">
+        <span class="field-label">Имя нового руководителя *</span><input type="text" id="vManagerNewName" placeholder="Введите имя" />
+      </label>
+
+      <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
+      <label class="field"><span class="field-label">Потребность *</span><input type="number" id="vSlots" min="1" required /></label>
+
       <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
       <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
+
+      <label class="field field-full"><span class="field-label">Статус</span>
+        <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
+      </label>
       <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="vComment" rows="2"></textarea></label>
     </form>
   </div>
@@ -271,32 +281,45 @@
     <button class="modal-tab active" data-tab="info">Основная информация</button>
     <button class="modal-tab" data-tab="stage">Этап</button>
     <button class="modal-tab" data-tab="interviews">Собеседования</button>
-    <button class="modal-tab" data-tab="documents">Документы</button>
-    <button class="modal-tab" data-tab="notes">Заметки</button>
     <button class="modal-tab" data-tab="history">История</button>
   </div>
   <div class="modal-body">
 
     <div class="tab-pane active" data-pane="info">
+      <div class="status-badges" id="statusBadges"></div>
       <form id="candidateForm" class="form-grid">
         <label class="field"><span class="field-label">ФИО *</span><input type="text" id="cName" required /></label>
         <label class="field"><span class="field-label">Телефон *</span><input type="tel" id="cPhone" required placeholder="7 999 999-99-99" /></label>
+
         <label class="field"><span class="field-label">Вакансия *</span>
           <select id="cVacancy" class="js-enhance" required></select>
         </label>
         <label class="field"><span class="field-label">Источник *</span>
           <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
         </label>
+
+        <label class="field"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
         <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
-        <label class="field field-full"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
-        <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="cComment" rows="2"></textarea></label>
+
         <div class="field field-full">
           <span class="field-label">Теги</span>
           <div class="tag-picker" id="cTagPicker"></div>
         </div>
       </form>
-      <div class="duplicate-warning hidden" id="duplicateWarning">
-        Кандидат с таким телефоном или ФИО уже существует.
+      <div class="duplicate-warning hidden" id="duplicateWarning"></div>
+
+      <div class="info-subsection">
+        <span class="field-label">Собеседования</span>
+        <div class="interview-history" id="infoInterviewsList"></div>
+      </div>
+
+      <div class="info-subsection">
+        <span class="field-label">Заметки</span>
+        <div class="notes-list" id="notesList"></div>
+        <div class="note-form-row">
+          <textarea id="newNoteText" rows="2" placeholder="Новая заметка..."></textarea>
+          <button class="btn btn-secondary btn-tiny" id="addNoteBtn">Добавить</button>
+        </div>
       </div>
     </div>
 
@@ -312,20 +335,6 @@
         <button class="btn btn-secondary btn-tiny" id="addInterviewBtn">Назначить</button>
       </div>
       <div class="interview-history" id="interviewHistory"></div>
-    </div>
-
-    <div class="tab-pane" data-pane="documents">
-      <label class="field"><span class="field-label">Ссылка на резюме</span><input type="url" id="docResumeLink" /></label>
-      <label class="field"><span class="field-label">Ссылка на анкету</span><input type="url" id="docFormLink" /></label>
-      <button class="btn btn-secondary btn-tiny" id="saveDocsBtn">Сохранить ссылки</button>
-    </div>
-
-    <div class="tab-pane" data-pane="notes">
-      <div class="notes-list" id="notesList"></div>
-      <div class="note-form-row">
-        <textarea id="newNoteText" rows="2" placeholder="Новая заметка..."></textarea>
-        <button class="btn btn-secondary btn-tiny" id="addNoteBtn">Добавить</button>
-      </div>
     </div>
 
     <div class="tab-pane" data-pane="history">
@@ -347,6 +356,17 @@
   <div class="modal-footer">
     <button class="btn btn-secondary" id="confirmCancelBtn">Отмена</button>
     <button class="btn btn-danger" id="confirmOkBtn">Продолжить</button>
+  </div>
+</div>
+
+<!-- выбор из списка (для массовых действий в базе кандидатов) -->
+<div class="modal modal-small hidden" id="choiceModal">
+  <div class="modal-header">
+    <h2 id="choiceModalTitle">Выберите значение</h2>
+    <button class="modal-close" data-close-modal="choiceModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="choice-list" id="choiceList"></div>
   </div>
 </div>
 
