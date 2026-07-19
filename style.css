@@ -214,7 +214,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--black); 
   align-items: center;
   gap: 8px;
   color: var(--text);
-  font-size: 15px;
+  font-size: 30px;
   font-weight: 800;
   letter-spacing: -0.045em;
   white-space: nowrap;
@@ -320,6 +320,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--black); 
 
 .view { min-width: 0; }
 .view-header {
+   padding-top: 15px;
   position: relative;
   min-height: 142px;
   margin: 0 0 10px;
