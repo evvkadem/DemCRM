@@ -677,9 +677,9 @@ $("#candidateTabs").addEventListener("click", (e) => {
 
 const STATUS_BADGE_COLOR = {
   "не вышел на связь": "#c9a24a",
-  "чёрный список": "#333333",
+  "чёрный список": "#2A241A",
   "не подходит": "#a85c5c",
-  "не актуально": "#8a8a8e",
+  "не актуально": "#8A7C63",
   "трудоустроен": "#3f7d54",
   "уволен": "#a85c5c",
 };
@@ -691,7 +691,7 @@ function renderStatusBadges(c) {
   if (!c) { box.innerHTML = ""; return; }
   const badges = [];
   if (c.status && c.status !== "активный") {
-    const color = STATUS_BADGE_COLOR[c.status] || "#8a8a8e";
+    const color = STATUS_BADGE_COLOR[c.status] || "#8A7C63";
     badges.push(`<span class="status-badge" style="background:${color}22;color:${color}">${escapeHtml(c.status)}</span>`);
   }
   Object.keys(c.rejectedVacancies || {}).forEach((vId) => {
@@ -897,8 +897,8 @@ async function ensureSystemTags() {
   for (const name of SYSTEM_TAGS) {
     const exists = Object.values(state.tags).some((t) => t.name === name);
     if (!exists) {
-      const colors = { "не вышел на связь": "#c9a24a", "чёрный список": "#333333", "не подходит": "#a85c5c", "не актуально": "#8a8a8e", "не пришёл на собеседование": "#b5793f" };
-      await dbPush("tags", { name, color: colors[name] || "#999999" });
+      const colors = { "не вышел на связь": "#c9a24a", "чёрный список": "#2A241A", "не подходит": "#a85c5c", "не актуально": "#8A7C63", "не пришёл на собеседование": "#b5793f" };
+      await dbPush("tags", { name, color: colors[name] || "#9C8F76" });
     }
   }
 }
