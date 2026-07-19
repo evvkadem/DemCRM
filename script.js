@@ -601,15 +601,18 @@ function renderKCard(id, c) {
   }).join("");
 
   el.innerHTML = `
-    <div class="kcard-head">
+    <div class="kcard-title">${escapeHtml(state.vacancies[c.vacancyId]?.title || c.stage || "Кандидат")}</div>
+    <div class="kcard-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="kcard-person">
       ${avatarHtml(c.name, "avatar-circle-sm")}
-      <div class="kcard-name">${escapeHtml(c.name)}</div>
+      <div>
+        <div class="kcard-name">${escapeHtml(c.name)}</div>
+        <div class="kcard-date">${formatDate(c.createdAt).replace(/\.20/, ".")}</div>
+      </div>
     </div>
-    <div class="kcard-phone">${escapeHtml(formatPhone(c.phone))}</div>
-    ${!state.currentVacancyId ? `<div class="kcard-vacancy">${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</div>` : ""}
     <div class="kcard-meta">
       <span class="kcard-source">${sourceLabel(c.source)}</span>
-      ${hasInterviewToday ? '<span class="kcard-today">сегодня собес.</span>' : ""}
+      ${hasInterviewToday ? '<span class="kcard-today">сегодня</span>' : ""}
     </div>
     ${tagsHtml ? `<div class="kcard-tags">${tagsHtml}</div>` : ""}
   `;
