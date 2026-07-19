@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>DemCRM — Pipeline</title>
+<title>DemCRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -77,23 +80,6 @@
 
   <!-- основная область -->
   <main class="main">
-    <nav class="top-nav" aria-label="Основная навигация">
-      <button class="nav-item top-home" data-view="vacancies" title="Главная">
-        <svg class="nav-icon" viewBox="0 0 20 20"><path d="M4.5 9.2 10 4l5.5 5.2V16a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V9.2Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>
-      </button>
-      <button class="nav-item top-tab" data-view="kanban"><span>Pipeline</span></button>
-      <button class="nav-item top-tab" data-view="vacancies"><span>Activity</span></button>
-      <button class="nav-item top-tab" data-view="candidates"><span>Comments</span></button>
-      <button class="nav-item top-tab" data-view="analytics"><span>Reports</span></button>
-    </nav>
-
-    <div class="bottom-dock" aria-hidden="true">
-      <button class="dock-btn"><svg viewBox="0 0 20 20"><path d="M4 6h12v8H4z" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M7 6V4h6v2" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
-      <button class="dock-btn"><svg viewBox="0 0 20 20"><path d="M7 4h6v12H7z" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
-      <button class="dock-btn dock-main">+</button>
-      <button class="dock-btn"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M10 3v2M10 15v2M3 10h2M15 10h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>
-      <button class="dock-btn"><svg viewBox="0 0 20 20"><path d="M6 5h8M10 5v10M7 15h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>
-    </div>
 
     <!-- ---------------- ВАКАНСИИ ---------------- -->
     <section id="view-vacancies" class="view">
@@ -122,22 +108,13 @@
 
     <!-- ---------------- KANBAN ---------------- -->
     <section id="view-kanban" class="view hidden">
-      <header class="view-header pipeline-header">
+      <header class="view-header">
         <div class="view-header-top">
-          <h1>Daily Operation</h1>
+          <h1>Kanban</h1>
         </div>
         <div class="view-header-actions">
-          <button class="btn btn-primary pipeline-pill" type="button">Still Running <span>32</span></button>
           <select class="select-input js-enhance" id="kanbanVacancyScope"><option value="">Все вакансии</option></select>
           <button class="btn btn-primary" id="addCandidateBtn">+ Добавить кандидата</button>
-        </div>
-        <div class="pipeline-stats">
-          <div><small>Week's Tasks</small><strong>132</strong></div>
-          <div><small>Pending Approval</small><strong>34</strong></div>
-          <div><small>Employees Involved</small><strong>22</strong></div>
-        </div>
-        <div class="pipeline-tools" aria-hidden="true">
-          <button class="icon-btn">⌁</button><button class="icon-btn">⌂</button><button class="icon-btn">⚙</button>
         </div>
       </header>
 
@@ -484,6 +461,8 @@
   <div class="quick-search-results" id="quickSearchResults"></div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script type="module" src="script.js"></script>
 </body>
 </html>
