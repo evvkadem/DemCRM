@@ -24,6 +24,59 @@ import {
   dbGet, dbSet, dbUpdate, dbPush, dbRemove, dbListen, timestamp, nowISO,
 } from "./firebase.js";
 
+// Локальные fallback-парсеры: в превью Arena внешние CDN недоступны,
+// поэтому CSV/TSV импорт продолжает работать без PapaParse/XLSX.
+function parseDelimitedFallback(input, options = {}) {
+  const run = (text) => {
+    const delimiter = options.delimiter || (String(text).includes("\t") ? "\t" : ",");
+    const lines = String(text || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .split("\n")
+      .filter((line) => !options.skipEmptyLines || line.trim());
+
+    const parseLine = (line) => {
+      const cells = [];
+      let cell = "";
+      let quoted = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (quoted && line[i + 1] === '"') { cell += '"'; i++; }
+          else quoted = !quoted;
+        } else if (ch === delimiter && !quoted) {
+          cells.push(cell.trim());
+          cell = "";
+        } else {
+          cell += ch;
+        }
+      }
+      cells.push(cell.trim());
+      return cells;
+    };
+
+    let data = lines.map(parseLine);
+    if (options.header) {
+      const headers = data.shift() || [];
+      data = data.map((row) => Object.fromEntries(headers.map((h, i) => [h, row[i] || ""])));
+    }
+    return { data, errors: [], meta: { delimiter } };
+  };
+
+  if (typeof input !== "string" && typeof FileReader !== "undefined") {
+    const reader = new FileReader();
+    reader.onload = () => options.complete?.(run(reader.result));
+    reader.readAsText(input);
+    return undefined;
+  }
+
+  const result = run(input);
+  options.complete?.(result);
+  return result;
+}
+const Papa = window.Papa || { parse: parseDelimitedFallback };
+const XLSX = window.XLSX || null;
+
 // ----------------------------------------------------------------
 // 1. STATE & CONSTANTS
 // ----------------------------------------------------------------
@@ -259,7 +312,7 @@ function renderVacancies() {
   const search = $("#vacancySearch").value.trim().toLowerCase();
   const list = Object.entries(state.vacancies)
     .filter(([id, v]) => (vacancyFilterMode === "all" ? true : v.status === vacancyFilterMode))
-    .filter(([id, v]) => !search || v.title.toLowerCase().includes(search) || (v.manager || "").toLowerCase().includes(search))
+    .filter(([id, v]) => !search || (v.title || "").toLowerCase().includes(search) || (v.manager || "").toLowerCase().includes(search))
     .sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
 
   grid.innerHTML = "";
@@ -994,15 +1047,16 @@ $("#saveCandidateBtn").addEventListener("click", async () => {
   const dup = findDuplicateCandidate(name, pDigits, state.currentCandidateId);
   if (dup && !state.currentCandidateId) {
     const [dupId, dupData] = dup;
-    const warnBox = $("#duplicateWarning");
-    if (dupData.rejectedVacancies?.[vacancyId]) {
-      const vacancyTitle = state.vacancies[vacancyId]?.title || "эту вакансию";
-      warnBox.textContent = `Кандидат уже отмечен «не подходит» на вакансию «${vacancyTitle}».`;
-    } else {
-      warnBox.textContent = "Кандидат с таким телефоном или ФИО уже существует.";
-    }
-    warnBox.classList.remove("hidden");
+    const message = dupData.rejectedVacancies?.[vacancyId]
+      ? `Кандидат уже отмечен «не подходит» на вакансию «${state.vacancies[vacancyId]?.title || "эту вакансию"}».`
+      : "Кандидат с таким телефоном или ФИО уже существует.";
+
+    // Раньше предупреждение записывалось ДО открытия существующей карточки,
+    // а openCandidateModal сразу скрывал блок — пользователь не видел причину.
     openCandidateModal(dupId);
+    const warnBox = $("#duplicateWarning");
+    warnBox.textContent = message;
+    warnBox.classList.remove("hidden");
     toast("Кандидат уже существует — открыта существующая карточка");
     return;
   }
@@ -1270,6 +1324,11 @@ $("#importFile").addEventListener("change", (e) => {
   if (file.name.endsWith(".csv")) {
     Papa.parse(file, { header: true, skipEmptyLines: true, complete: (res) => setImportRows(res.data) });
   } else {
+    if (!XLSX) {
+      toast("XLSX в локальном превью недоступен. Сохраните файл как CSV или вставьте таблицу из Excel.", true);
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const wb = XLSX.read(ev.target.result, { type: "binary", cellDates: true });
@@ -1630,10 +1689,10 @@ $("#saveProfileBtn").addEventListener("click", async () => {
 const THEME_KEY = "demcrm-theme";
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  $all("[data-theme]").forEach((b) => b.classList.toggle("active", b.dataset.theme === theme));
+  $all("button[data-theme]").forEach((b) => b.classList.toggle("active", b.dataset.theme === theme));
   localStorage.setItem(THEME_KEY, theme);
 }
-$all("[data-theme]").forEach((btn) => btn.addEventListener("click", () => applyTheme(btn.dataset.theme)));
+$all("button[data-theme]").forEach((btn) => btn.addEventListener("click", () => applyTheme(btn.dataset.theme)));
 
 $("#resetInterfaceBtn").addEventListener("click", () => {
   applyTheme("light");
@@ -1651,6 +1710,8 @@ async function runAutomationChecks() {
     if (c.onKanban === false) continue;
     const days = daysBetween(c.stageChangedAt, new Date(now).toISOString());
     if (days >= AUTOTRANSFER_DAYS) {
+      const alreadyTagged = Object.keys(c.tags || {}).some((tagId) => state.tags[tagId]?.name === "не вышел на связь");
+      if (alreadyTagged || c.onKanban === false) continue;
       await addSystemTagToCandidate(id, "не вышел на связь");
       await logHistory(id, `Автоматически убран с Kanban (более ${AUTOTRANSFER_DAYS} дней на этапе «${c.stage}»)`);
     }
