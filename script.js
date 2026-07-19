@@ -267,13 +267,13 @@ function renderVacancies() {
 
   const statusLabel = { active: "Активна", paused: "Приостановлена", closed: "Закрыта" };
 
-  list.forEach(([id, v]) => {
+  list.forEach(([id, v], index) => {
     const candidatesForV = Object.values(state.candidates).filter((c) => c.vacancyId === id);
     const employed = candidatesForV.filter((c) => c.stage === "Трудоустройство" && c.employmentDate).length;
     const progress = v.slots ? Math.min(100, Math.round((employed / v.slots) * 100)) : 0;
 
     const card = document.createElement("div");
-    card.className = "vacancy-card";
+    card.className = `vacancy-card ${PASTEL_PALETTE[index % PASTEL_PALETTE.length]}`;
     card.innerHTML = `
       <div class="vacancy-card-title">${escapeHtml(v.title)}</div>
       <div class="vacancy-card-manager">${escapeHtml(v.manager || "")}${v.internalPhone ? ` · вн. ${escapeHtml(v.internalPhone)}` : ""}</div>
@@ -292,6 +292,32 @@ function escapeHtml(str) {
   d.textContent = str ?? "";
   return d.innerHTML;
 }
+
+// ---- пастельная палитра и аватарки-инициалы (детерминированно по строке) ----
+const PASTEL_PALETTE = ["pastel-yellow", "pastel-pink", "pastel-blue", "pastel-lilac", "pastel-green"];
+
+function pastelClassFor(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return PASTEL_PALETTE[Math.abs(hash) % PASTEL_PALETTE.length];
+}
+
+function initialsFor(name) {
+  const parts = (name || "").trim().split(/\s+/);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "?";
+}
+
+function avatarHtml(name, sizeClass = "") {
+  return `<span class="avatar-circle ${sizeClass} ${pastelClassFor(name || "")}">${initialsFor(name)}</span>`;
+}
+
+// простая линейная иллюстрация для пустых состояний — открытая коробка
+const EMPTY_BOX_SVG = `<svg width="96" height="96" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M20 58 L38 32 H82 L100 58" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="20" y="58" width="80" height="42" rx="8" stroke="currentColor" stroke-width="2.2"/>
+  <path d="M20 58 H45 A5 5 0 0 0 50 63 A5 5 0 0 0 55 68 H65 A5 5 0 0 0 70 63 A5 5 0 0 0 75 58 H100" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>`;
+$("#vacancyEmptyIllustration").innerHTML = EMPTY_BOX_SVG;
 
 $("#vacancySearch").addEventListener("input", renderVacancies);
 $("#vacancyFilter").addEventListener("change", (e) => {
@@ -522,7 +548,10 @@ function renderKCard(id, c) {
   }).join("");
 
   el.innerHTML = `
-    <div class="kcard-name">${escapeHtml(c.name)}</div>
+    <div class="kcard-head">
+      ${avatarHtml(c.name, "avatar-circle-sm")}
+      <div class="kcard-name">${escapeHtml(c.name)}</div>
+    </div>
     <div class="kcard-phone">${escapeHtml(formatPhone(c.phone))}</div>
     ${!state.currentVacancyId ? `<div class="kcard-vacancy">${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</div>` : ""}
     <div class="kcard-meta">
@@ -1090,7 +1119,7 @@ function renderCandidatesTable() {
     ).join(" ");
     tr.innerHTML = `
       <td class="th-check"><input type="checkbox" class="row-check" data-id="${id}" ${state.selectedCandidateIds.has(id) ? "checked" : ""} /></td>
-      <td>${escapeHtml(c.name)}</td>
+      <td><div style="display:flex;align-items:center;gap:9px;">${avatarHtml(c.name, "avatar-circle-sm")}<span>${escapeHtml(c.name)}</span></div></td>
       <td>${escapeHtml(formatPhone(c.phone))}</td>
       <td>${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</td>
       <td>${escapeHtml(c.stage || "—")}</td>
@@ -1474,13 +1503,14 @@ function renderAnalytics() {
     ([id, v]) => v.status === "active" && (scope === "all" || id === scope)
   ).length;
 
+  const statPastels = ["pastel-yellow", "pastel-pink", "pastel-blue", "pastel-lilac"];
   $("#statGrid").innerHTML = [
     ["Новых кандидатов", newCandidates.length],
     ["Активные вакансии", activeVacancies],
     ["Трудоустроено", employedInPeriod.length],
     ["Собеседования", interviewsInPeriod],
-  ].map(([label, value]) => `
-    <div class="stat-card"><div class="stat-card-value">${value}</div><div class="stat-card-label">${label}</div></div>
+  ].map(([label, value], i) => `
+    <div class="stat-card ${statPastels[i]}"><div class="stat-card-value">${value}</div><div class="stat-card-label">${label}</div></div>
   `).join("");
 
   // воронка — по кандидатам, добавленным в этом периоде: сколько дошли
