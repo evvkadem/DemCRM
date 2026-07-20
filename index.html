@@ -471,7 +471,11 @@
   </div>
   <div class="modal-body">
     <p class="import-hint">Загрузите файл Excel/CSV или вставьте таблицу из буфера обмена (Ctrl+V). Ожидаемые колонки: ФИО, Телефон, Вакансия, Источник, Дата добавления, Ссылка на резюме.</p>
-    <input type="file" id="importFile" accept=".csv,.xlsx,.xls" />
+    <div class="file-input-row">
+      <label class="file-input-label" for="importFile">Выбрать файл</label>
+      <span class="file-input-name" id="importFileName">Файл не выбран</span>
+      <input type="file" id="importFile" accept=".csv,.xlsx,.xls" class="file-input-hidden" />
+    </div>
     <textarea id="importPasteArea" rows="8" placeholder="Вставьте сюда данные из Excel..."></textarea>
     <div id="importPreview" class="import-preview"></div>
   </div>

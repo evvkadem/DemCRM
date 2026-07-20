@@ -299,7 +299,7 @@ const PASTEL_PALETTE = ["pastel-yellow", "pastel-pink", "pastel-blue", "pastel-l
 
 // фиксированный спектр цветов для тегов — пользователь просто выбирает
 // готовый цвет, а не крутит системный color picker
-const TAG_COLOR_PALETTE = ["#D9A441", "#C2543D", "#8E3F68", "#593F92", "#2C5A82", "#3C6A34", "#B5793F", "#6B7A8F", "#2A241A", "#9C4B4B"];
+const TAG_COLOR_PALETTE = ["#85601B", "#AB4A36", "#8E3F68", "#593F92", "#2C5A82", "#3C6A34", "#885B2F", "#5A6678", "#2A241A", "#9C4B4B"];
 let pendingNewTagColor = TAG_COLOR_PALETTE[0];
 
 function renderColorSwatches(container, selectedColor, onPick) {
@@ -534,7 +534,11 @@ function renderKanban() {
     board.appendChild(col);
 
     const body = $(".kanban-column-body", col);
-    candidatesInStage.forEach(([id, c]) => body.appendChild(renderKCard(id, c)));
+    if (candidatesInStage.length === 0) {
+      body.innerHTML = `<div class="kanban-column-empty">Пусто</div>`;
+    } else {
+      candidatesInStage.forEach(([id, c]) => body.appendChild(renderKCard(id, c)));
+    }
 
     body.addEventListener("dragover", (e) => { e.preventDefault(); body.classList.add("drag-over"); });
     body.addEventListener("dragleave", () => body.classList.remove("drag-over"));
@@ -698,12 +702,12 @@ $("#candidateTabs").addEventListener("click", (e) => {
 });
 
 const STATUS_BADGE_COLOR = {
-  "не вышел на связь": "#c9a24a",
+  "не вышел на связь": "#85601B",
   "чёрный список": "#2A241A",
-  "не подходит": "#a85c5c",
-  "не актуально": "#8A7C63",
-  "трудоустроен": "#3f7d54",
-  "уволен": "#a85c5c",
+  "не подходит": "#9C5353",
+  "не актуально": "#726752",
+  "трудоустроен": "#386F4B",
+  "уволен": "#9C5353",
 };
 
 // плашки статуса и "не подходит на вакансию X" — видны сразу на вкладке
@@ -713,7 +717,7 @@ function renderStatusBadges(c) {
   if (!c) { box.innerHTML = ""; return; }
   const badges = [];
   if (c.status && c.status !== "активный") {
-    const color = STATUS_BADGE_COLOR[c.status] || "#8A7C63";
+    const color = STATUS_BADGE_COLOR[c.status] || "#726752";
     badges.push(`<span class="status-badge" style="background:${color}22;color:${color}">${escapeHtml(c.status)}</span>`);
   }
   Object.keys(c.rejectedVacancies || {}).forEach((vId) => {
@@ -919,8 +923,8 @@ async function ensureSystemTags() {
   for (const name of SYSTEM_TAGS) {
     const exists = Object.values(state.tags).some((t) => t.name === name);
     if (!exists) {
-      const colors = { "не вышел на связь": "#c9a24a", "чёрный список": "#2A241A", "не подходит": "#a85c5c", "не актуально": "#8A7C63", "не пришёл на собеседование": "#b5793f" };
-      await dbPush("tags", { name, color: colors[name] || "#9C8F76" });
+      const colors = { "не вышел на связь": "#85601B", "чёрный список": "#2A241A", "не подходит": "#9C5353", "не актуально": "#726752", "не пришёл на собеседование": "#885B2F" };
+      await dbPush("tags", { name, color: colors[name] || "#726752" });
     }
   }
 }
@@ -1281,6 +1285,7 @@ $("#bulkKanbanOffBtn").addEventListener("click", () => {
 $("#importBtn").addEventListener("click", () => {
   state.importRows = [];
   $("#importFile").value = "";
+  $("#importFileName").textContent = "Файл не выбран";
   $("#importPasteArea").value = "";
   $("#importPreview").innerHTML = "";
   openModal("importModal");
@@ -1289,6 +1294,7 @@ $("#importBtn").addEventListener("click", () => {
 $("#importFile").addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  $("#importFileName").textContent = file.name;
   if (file.name.endsWith(".csv")) {
     Papa.parse(file, { header: true, skipEmptyLines: true, complete: (res) => setImportRows(res.data) });
   } else {
