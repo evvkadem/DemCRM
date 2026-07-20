@@ -297,6 +297,27 @@ function escapeHtml(str) {
 // ---- пастельная палитра и аватарки-инициалы (детерминированно по строке) ----
 const PASTEL_PALETTE = ["pastel-yellow", "pastel-pink", "pastel-blue", "pastel-lilac", "pastel-green"];
 
+// фиксированный спектр цветов для тегов — пользователь просто выбирает
+// готовый цвет, а не крутит системный color picker
+const TAG_COLOR_PALETTE = ["#D9A441", "#C2543D", "#8E3F68", "#593F92", "#2C5A82", "#3C6A34", "#B5793F", "#6B7A8F", "#2A241A", "#9C4B4B"];
+let pendingNewTagColor = TAG_COLOR_PALETTE[0];
+
+function renderColorSwatches(container, selectedColor, onPick) {
+  container.innerHTML = "";
+  TAG_COLOR_PALETTE.forEach((color) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "color-swatch" + (color.toLowerCase() === (selectedColor || "").toLowerCase() ? " selected" : "");
+    btn.style.background = color;
+    btn.addEventListener("click", () => {
+      $all(".color-swatch", container).forEach((s) => s.classList.remove("selected"));
+      btn.classList.add("selected");
+      onPick(color);
+    });
+    container.appendChild(btn);
+  });
+}
+
 function pastelClassFor(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
@@ -1380,18 +1401,30 @@ function renderTagsManager() {
   const isAdmin = state.user?.role === "admin";
   box.innerHTML = "";
   Object.entries(state.tags).forEach(([id, t]) => {
-    const row = document.createElement("div");
-    row.className = "tag-manager-row";
-    row.innerHTML = `
-      <span class="tag-chip" style="background:${t.color}22;color:${t.color}">${escapeHtml(t.name)}</span>
-      ${isAdmin ? `<input type="color" value="${t.color}" data-id="${id}" class="tag-color-input" />` : ""}
-      ${isAdmin && !SYSTEM_TAGS.includes(t.name) ? `<button class="btn btn-tiny btn-danger" data-del-tag="${id}">Удалить</button>` : ""}
+    const wrap = document.createElement("div");
+    wrap.className = "tag-manager-row-wrap";
+    wrap.innerHTML = `
+      <div class="tag-manager-row">
+        <span class="tag-chip" style="background:${t.color}22;color:${t.color}">${escapeHtml(t.name)}</span>
+        ${isAdmin ? `<button type="button" class="color-swatch-trigger" style="background:${t.color}" data-id="${id}" title="Изменить цвет"></button>` : ""}
+        ${isAdmin && !SYSTEM_TAGS.includes(t.name) ? `<button class="btn btn-tiny btn-danger" data-del-tag="${id}">Удалить</button>` : ""}
+      </div>
+      ${isAdmin ? `<div class="color-swatches hidden" data-swatches-for="${id}"></div>` : ""}
     `;
-    box.appendChild(row);
+    box.appendChild(wrap);
   });
-  $all(".tag-color-input", box).forEach((input) =>
-    input.addEventListener("change", async (e) => {
-      await dbUpdate(`tags/${e.target.dataset.id}`, { color: e.target.value });
+  $all(".color-swatch-trigger", box).forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const panel = box.querySelector(`[data-swatches-for="${btn.dataset.id}"]`);
+      const isOpen = !panel.classList.contains("hidden");
+      $all(".color-swatches", box).forEach((p) => p.classList.add("hidden"));
+      if (!isOpen) {
+        panel.classList.remove("hidden");
+        renderColorSwatches(panel, state.tags[btn.dataset.id]?.color, async (color) => {
+          await dbUpdate(`tags/${btn.dataset.id}`, { color });
+          panel.classList.add("hidden");
+        });
+      }
     })
   );
   $all("[data-del-tag]", box).forEach((btn) =>
@@ -1406,7 +1439,10 @@ function renderTagsManager() {
   // добавление тега — только администратор (правила Firebase всё равно это
   // заблокируют, но лучше не показывать форму, которая всё равно не сработает)
   $("#newTagName").parentElement.classList.toggle("hidden", !isAdmin);
-  if (!isAdmin) {
+  if (isAdmin) {
+    pendingNewTagColor = TAG_COLOR_PALETTE[0];
+    renderColorSwatches($("#newTagColorSwatches"), pendingNewTagColor, (color) => { pendingNewTagColor = color; });
+  } else {
     const note = document.createElement("p");
     note.className = "import-hint";
     note.textContent = "Редактирование справочника тегов доступно только администратору.";
@@ -1416,10 +1452,12 @@ function renderTagsManager() {
 
 $("#addTagBtn").addEventListener("click", async () => {
   const name = $("#newTagName").value.trim();
-  const color = $("#newTagColor").value;
+  const color = pendingNewTagColor;
   if (!name) { toast("Введите название тега", true); return; }
   await dbPush("tags", { name, color });
   $("#newTagName").value = "";
+  pendingNewTagColor = TAG_COLOR_PALETTE[0];
+  renderColorSwatches($("#newTagColorSwatches"), pendingNewTagColor, (c) => { pendingNewTagColor = c; });
   toast("Тег создан");
 });
 

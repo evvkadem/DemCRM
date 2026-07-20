@@ -247,23 +247,29 @@
     <form id="vacancyForm" class="form-grid">
       <label class="field field-full"><span class="field-label">Название вакансии *</span><input type="text" id="vTitle" required /></label>
 
-      <label class="field"><span class="field-label">Руководитель отдела *</span>
-        <select id="vManager" class="js-enhance" required></select>
-      </label>
-      <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
+      <div class="form-row">
+        <label class="field"><span class="field-label">Руководитель отдела *</span>
+          <select id="vManager" class="js-enhance" required></select>
+        </label>
+        <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
+      </div>
       <label class="field field-full hidden" id="vManagerNewWrap">
         <span class="field-label">Имя нового руководителя *</span><input type="text" id="vManagerNewName" placeholder="Введите имя" />
       </label>
 
-      <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
-      <label class="field"><span class="field-label">Потребность *</span><input type="number" id="vSlots" min="1" required /></label>
+      <div class="form-row">
+        <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
+        <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
+        <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
+      </div>
 
-      <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
-      <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
+      <div class="form-row">
+        <label class="field"><span class="field-label">Потребность *</span><input type="number" id="vSlots" min="1" required /></label>
+        <label class="field"><span class="field-label">Статус</span>
+          <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
+        </label>
+      </div>
 
-      <label class="field field-full"><span class="field-label">Статус</span>
-        <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
-      </label>
       <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="vComment" rows="2"></textarea></label>
     </form>
   </div>
@@ -292,30 +298,35 @@
     <div class="tab-pane active" data-pane="info">
       <div class="status-badges" id="statusBadges"></div>
       <form id="candidateForm" class="form-grid">
-        <label class="field"><span class="field-label">ФИО *</span><input type="text" id="cName" required /></label>
-        <label class="field"><span class="field-label">Телефон *</span><input type="tel" id="cPhone" required placeholder="7 999 999-99-99" /></label>
+        <div class="form-row">
+          <label class="field"><span class="field-label">ФИО *</span><input type="text" id="cName" required /></label>
+          <label class="field"><span class="field-label">Телефон *</span><input type="tel" id="cPhone" required placeholder="7 999 999-99-99" /></label>
+        </div>
 
-        <label class="field"><span class="field-label">Вакансия *</span>
-          <select id="cVacancy" class="js-enhance" required></select>
-        </label>
-        <label class="field"><span class="field-label">Источник *</span>
-          <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
-        </label>
+        <div class="form-row">
+          <label class="field"><span class="field-label">Вакансия *</span>
+            <select id="cVacancy" class="js-enhance" required></select>
+          </label>
+          <label class="field"><span class="field-label">Источник *</span>
+            <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
+          </label>
+          <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
+        </div>
 
-        <label class="field"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
-        <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
+        <label class="field field-full"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
 
-        <div class="field field-full">
-          <span class="field-label">Теги</span>
-          <div class="tag-picker" id="cTagPicker"></div>
+        <div class="form-row">
+          <div class="field">
+            <span class="field-label">Теги</span>
+            <div class="tag-picker" id="cTagPicker"></div>
+          </div>
+          <div class="field">
+            <span class="field-label">Собеседования</span>
+            <div class="interview-history" id="infoInterviewsList"></div>
+          </div>
         </div>
       </form>
       <div class="duplicate-warning hidden" id="duplicateWarning"></div>
-
-      <div class="info-subsection">
-        <span class="field-label">Собеседования</span>
-        <div class="interview-history" id="infoInterviewsList"></div>
-      </div>
 
       <div class="info-subsection">
         <span class="field-label">Заметки</span>
@@ -395,9 +406,27 @@
       <button class="btn btn-primary btn-tiny" id="saveProfileBtn">Сохранить</button>
     </div>
     <div class="tab-pane" data-settings-pane="appearance">
-      <div class="theme-toggle">
-        <button class="segmented-item active" data-theme="light">Светлая</button>
-        <button class="segmented-item" data-theme="dark">Тёмная</button>
+      <div class="theme-picker">
+        <button class="theme-option active" data-theme="light">
+          <span class="theme-preview theme-preview-light">
+            <span class="theme-preview-sidebar"></span>
+            <span class="theme-preview-content">
+              <span class="theme-preview-card"></span>
+              <span class="theme-preview-card"></span>
+            </span>
+          </span>
+          <span class="theme-option-label">Светлая</span>
+        </button>
+        <button class="theme-option" data-theme="dark">
+          <span class="theme-preview theme-preview-dark">
+            <span class="theme-preview-sidebar"></span>
+            <span class="theme-preview-content">
+              <span class="theme-preview-card"></span>
+              <span class="theme-preview-card"></span>
+            </span>
+          </span>
+          <span class="theme-option-label">Тёмная</span>
+        </button>
       </div>
       <button class="btn btn-secondary btn-tiny" id="resetInterfaceBtn">Сбросить настройки интерфейса</button>
     </div>
@@ -405,7 +434,7 @@
       <div class="tags-manager" id="tagsManager"></div>
       <div class="tag-form-row">
         <input type="text" id="newTagName" placeholder="Название тега" />
-        <input type="color" id="newTagColor" value="#D9A441" />
+        <div class="color-swatches" id="newTagColorSwatches"></div>
         <button class="btn btn-secondary btn-tiny" id="addTagBtn">Добавить тег</button>
       </div>
     </div>
