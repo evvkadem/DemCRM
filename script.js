@@ -294,6 +294,42 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+// разрешаем только http(s)-ссылки в href, чтобы нельзя было положить
+// javascript:-URI через поле "Ссылка на резюме" (импорт из Excel и т.п.)
+function safeUrl(raw) {
+  const url = (raw || "").trim();
+  if (!url) return "";
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.href;
+  } catch (e) { /* невалидный URL */ }
+  return "";
+}
+
+// кнопка быстрого перехода к резюме в карточке кандидата — синхронизируется
+// с полем ввода на любое изменение (см. слушатель input ниже)
+function updateResumeLinkButton() {
+  const btn = $("#cResumeLinkOpen");
+  const url = safeUrl($("#cResumeLink").value);
+  if (url) {
+    btn.href = url;
+    btn.removeAttribute("aria-disabled");
+  } else {
+    btn.href = "#";
+    btn.setAttribute("aria-disabled", "true");
+  }
+}
+$("#cResumeLink").addEventListener("input", updateResumeLinkButton);
+
+// компактная ссылка-иконка на резюме для таблицы базы кандидатов
+// (клик по ней не должен открывать карточку кандидата — стоп распространения
+// вешается в renderCandidatesTable, там же где для чекбокса строки)
+function resumeLinkCellHtml(resumeLink) {
+  const url = safeUrl(resumeLink);
+  if (!url) return `<span class="resume-link-empty">—</span>`;
+  return `<a class="resume-link-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="Открыть резюме">↗</a>`;
+}
+
 // ---- пастельная палитра и аватарки-инициалы (детерминированно по строке) ----
 const PASTEL_PALETTE = ["pastel-yellow", "pastel-pink", "pastel-blue", "pastel-lilac", "pastel-green"];
 
@@ -607,6 +643,12 @@ async function handleStageDrop(candidateId, newStage) {
 }
 
 // панель собеседований (по датам)
+// сколько минут осталось до начала собеседования (отрицательное — уже началось/прошло)
+function minutesUntil(dateStr, timeStr) {
+  const target = new Date(`${dateStr}T${timeStr || "00:00"}`);
+  return (target - new Date()) / 60000;
+}
+
 function renderInterviewsPanel() {
   const offset = state.interviewDateOffset;
   const targetDate = new Date();
@@ -636,9 +678,14 @@ function renderInterviewsPanel() {
 
   items.forEach(({ candidateId, candidate, iv }) => {
     const chip = document.createElement("div");
-    chip.className = "interview-chip";
+    // выделяем карточку: цветом — по результату, отдельно — если до начала
+    // осталось 15 минут или меньше (и результат ещё не выставлен)
+    const resultClass = iv.result ? `chip-${iv.result}` : "";
+    const mins = offset === 0 && iv.time ? minutesUntil(iv.date, iv.time) : null;
+    const isSoon = !iv.result && mins !== null && mins <= 15;
+    chip.className = `interview-chip ${resultClass} ${isSoon ? "chip-soon" : ""}`.trim();
     chip.innerHTML = `
-      <div class="interview-chip-time">${iv.time || "—"}</div>
+      <div class="interview-chip-time">${iv.time || "—"}${isSoon ? '<span class="interview-chip-soon-badge">скоро</span>' : ""}</div>
       <div class="interview-chip-name">${escapeHtml(candidate.name)}</div>
       <div class="interview-chip-phone">${escapeHtml(formatPhone(candidate.phone))}</div>
     `;
@@ -677,6 +724,7 @@ function openCandidateModal(candidateId, activeTab = "info") {
   refreshCustomSelect($("#cVacancy"));
   refreshCustomSelect($("#cSource"));
   $("#cResumeLink").value = c?.resumeLink || "";
+  updateResumeLinkButton();
   $("#cCreatedAt").value = c?.createdAt ? new Date(c.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
   renderStatusBadges(c);
@@ -836,36 +884,103 @@ function renderStageTab(c) {
   }
 }
 
+// формат "через X дней" / "сегодня" / "завтра" / "прошло" для ближайшего собеседования
+function relativeDayLabel(dateStr) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
+  const days = Math.round((target - today) / 86400000);
+  if (days === 0) return "сегодня";
+  if (days === 1) return "завтра";
+  if (days > 1) return `через ${days} дн.`;
+  return "дата прошла";
+}
+
 function renderInterviewsTab(c, candidateId) {
+  const nextCard = $("#interviewNextCard");
   const box = $("#interviewHistory");
   box.innerHTML = "";
-  if (!c || !c.interviews) {
-    box.innerHTML = `<div class="interviews-empty">Собеседований пока нет</div>`;
-  } else {
-    Object.entries(c.interviews)
-      .sort((a, b) => new Date(b[1].date) - new Date(a[1].date))
-      .forEach(([ivId, iv]) => {
-        const row = document.createElement("div");
-        row.className = "interview-row";
-        const resultLabel = { pass: "Прошёл дальше", fail: "Не подходит", noshow: "Не пришёл", "": "Ожидает" }[iv.result || ""];
-        row.innerHTML = `
-          <strong>${formatDate(iv.date)} ${iv.time || ""}</strong> — ${resultLabel}
-          ${iv.comment ? `<div>${escapeHtml(iv.comment)}</div>` : ""}
-          <div class="interview-actions" style="margin-top:6px;display:flex;gap:6px;"></div>
-        `;
-        if (!iv.result) {
-          const actions = $(".interview-actions", row);
-          ["pass", "fail", "noshow"].forEach((res) => {
-            const b = document.createElement("button");
-            b.className = "btn btn-tiny btn-secondary";
-            b.textContent = { pass: "Прошёл", fail: "Не подходит", noshow: "Не пришёл" }[res];
-            b.addEventListener("click", () => setInterviewResult(candidateId, ivId, res));
-            actions.appendChild(b);
-          });
-        }
-        box.appendChild(row);
-      });
+
+  if (!c || !c.interviews || !Object.keys(c.interviews).length) {
+    nextCard.classList.add("hidden");
+    box.innerHTML = `<div class="interviews-empty">Собеседований пока нет — назначьте первое ниже</div>`;
+    return;
   }
+
+  const entries = Object.entries(c.interviews);
+
+  // ближайшее ожидающее собеседование — отдельным акцентным блоком сверху
+  const pending = entries
+    .filter(([, iv]) => !iv.result)
+    .sort((a, b) => new Date(`${a[1].date}T${a[1].time || "00:00"}`) - new Date(`${b[1].date}T${b[1].time || "00:00"}`));
+  const next = pending[0];
+
+  if (next) {
+    const [nextId, nextIv] = next;
+    nextCard.classList.remove("hidden");
+    $("#interviewNextLabel").textContent = isToday(nextIv.date) ? "Собеседование сегодня" : "Ближайшее собеседование";
+    $("#interviewNextWhen").textContent = `${formatDate(nextIv.date)}${nextIv.time ? ", " + nextIv.time : ""} · ${relativeDayLabel(nextIv.date)}`;
+    $("#interviewNextComment").textContent = nextIv.comment || "";
+    $("#interviewNextComment").classList.toggle("hidden", !nextIv.comment);
+
+    const actions = $("#interviewNextActions");
+    actions.innerHTML = "";
+    [["pass", "Прошёл"], ["fail", "Не подходит"], ["noshow", "Не пришёл"]].forEach(([res, label]) => {
+      const b = document.createElement("button");
+      b.className = "btn btn-tiny";
+      b.textContent = label;
+      b.addEventListener("click", () => setInterviewResult(candidateId, nextId, res));
+      actions.appendChild(b);
+    });
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn-tiny";
+    cancelBtn.textContent = "Отменить";
+    cancelBtn.addEventListener("click", () => cancelInterview(candidateId, nextId));
+    actions.appendChild(cancelBtn);
+  } else {
+    nextCard.classList.add("hidden");
+  }
+
+  // остальные (прошедшие/с результатом) — таймлайн снизу, все кроме показанного выше
+  const resultLabel = { pass: "Прошёл дальше", fail: "Не подходит", noshow: "Не пришёл", "": "Ожидает" };
+  entries
+    .filter(([id]) => !next || id !== next[0])
+    .sort((a, b) => new Date(`${b[1].date}T${b[1].time || "00:00"}`) - new Date(`${a[1].date}T${a[1].time || "00:00"}`))
+    .forEach(([ivId, iv]) => {
+      const status = iv.result || "pending";
+      const item = document.createElement("div");
+      item.className = `interview-timeline-item status-${status}`;
+      item.innerHTML = `
+        <div class="interview-timeline-card">
+          <div class="interview-timeline-head">
+            <span class="interview-timeline-date">${formatDate(iv.date)}${iv.time ? ", " + iv.time : ""}</span>
+            <span class="interview-status-chip status-${status}">${resultLabel[iv.result || ""]}</span>
+          </div>
+          ${iv.comment ? `<div class="interview-timeline-comment">${escapeHtml(iv.comment)}</div>` : ""}
+          <div class="interview-timeline-actions"></div>
+        </div>
+      `;
+      if (!iv.result) {
+        const actions = $(".interview-timeline-actions", item);
+        [["pass", "Прошёл"], ["fail", "Не подходит"], ["noshow", "Не пришёл"]].forEach(([res, label]) => {
+          const b = document.createElement("button");
+          b.className = "btn btn-tiny btn-secondary";
+          b.textContent = label;
+          b.addEventListener("click", () => setInterviewResult(candidateId, ivId, res));
+          actions.appendChild(b);
+        });
+      }
+      box.appendChild(item);
+    });
+}
+
+async function cancelInterview(candidateId, ivId) {
+  const c = state.candidates[candidateId];
+  const iv = c?.interviews?.[ivId];
+  await dbRemove(`candidates/${candidateId}/interviews/${ivId}`);
+  if (iv) await logHistory(candidateId, `Собеседование отменено: ${formatDate(iv.date)} ${iv.time || ""}`);
+  renderInterviewsTab(state.candidates[candidateId], candidateId);
+  renderInfoInterviewsList(state.candidates[candidateId]);
+  toast("Собеседование отменено");
 }
 
 $("#addInterviewBtn").addEventListener("click", async () => {
@@ -879,16 +994,21 @@ $("#addInterviewBtn").addEventListener("click", async () => {
   });
   await logHistory(candidateId, `Назначено собеседование: ${formatDate(date)} ${time}`);
 
-  // автоматический перевод на этап "Собеседование" — только вперёд по воронке,
-  // если кандидат уже прошёл дальше (например, "Отобрано"), назад не откатываем
+  // автоматический перевод по воронке (только вперёд, назад не откатываем):
+  // если собеседование назначено на сегодня — сразу этап "Собеседование",
+  // если на будущую дату — промежуточный этап "Приглашён на собеседование"
+  // (на сам этап "Собеседование" кандидат перейдёт автоматически в день
+  // собеседования, см. runAutomationChecks → applyInterviewDayTransitions)
   const c = state.candidates[candidateId];
-  const interviewStageIdx = STAGES.indexOf("Собеседование");
-  if (c && STAGES.indexOf(c.stage) < interviewStageIdx) {
-    await dbUpdate(`candidates/${candidateId}`, { stage: "Собеседование", stageChangedAt: nowISO() });
-    await logHistory(candidateId, `Этап автоматически изменён: ${c.stage} → Собеседование`);
+  const targetStage = isToday(date) ? "Собеседование" : "Приглашён на собеседование";
+  if (c && STAGES.indexOf(c.stage) < STAGES.indexOf(targetStage)) {
+    await dbUpdate(`candidates/${candidateId}`, { stage: targetStage, stageChangedAt: nowISO() });
+    await logHistory(candidateId, `Этап автоматически изменён: ${c.stage} → ${targetStage}`);
   }
 
   $("#newInterviewComment").value = "";
+  $("#newInterviewDate").value = "";
+  $("#newInterviewTime").value = "";
   renderInterviewsTab(state.candidates[candidateId], candidateId);
   renderStageTab(state.candidates[candidateId]);
   renderInfoInterviewsList(state.candidates[candidateId]);
@@ -910,12 +1030,22 @@ async function setInterviewResult(candidateId, ivId, result) {
     }
   } else if (result === "fail") {
     await addSystemTagToCandidate(candidateId, "не подходит");
+  } else if (result === "pass") {
+    // прошёл собеседование — переводим на этап "Отобрано" (только вперёд по
+    // воронке, если кандидат уже дальше — например, на согласовании с
+    // директором, — назад не откатываем)
+    const targetStage = "Отобрано";
+    if (STAGES.indexOf(c.stage) < STAGES.indexOf(targetStage)) {
+      await dbUpdate(`candidates/${candidateId}`, { stage: targetStage, stageChangedAt: nowISO() });
+      await logHistory(candidateId, `Этап автоматически изменён: ${c.stage} → ${targetStage}`);
+    }
   }
   renderInterviewsTab(state.candidates[candidateId], candidateId);
   renderStageTab(state.candidates[candidateId]);
   renderInfoInterviewsList(state.candidates[candidateId]);
   renderTagPicker(state.candidates[candidateId]?.tags || {});
   renderStatusBadges(state.candidates[candidateId]);
+  if (!$("#view-kanban").classList.contains("hidden")) renderInterviewsPanel();
   toast("Результат сохранён");
 }
 
@@ -1153,12 +1283,15 @@ function renderCandidatesTable() {
       <td>${formatDate(c.createdAt)}</td>
       <td>${tagsHtml}</td>
       <td>${escapeHtml(c.status || "—")}${rejectedBadges ? `<br>${rejectedBadges}` : ""}</td>
+      <td>${resumeLinkCellHtml(c.resumeLink)}</td>
     `;
     $(".row-check", tr).addEventListener("click", (e) => {
       e.stopPropagation();
       if (e.target.checked) state.selectedCandidateIds.add(id); else state.selectedCandidateIds.delete(id);
       updateBulkBar();
     });
+    const resumeLinkEl = $(".resume-link-btn", tr);
+    if (resumeLinkEl) resumeLinkEl.addEventListener("click", (e) => e.stopPropagation());
     tr.addEventListener("click", (e) => {
       if (e.target.classList.contains("row-check")) return;
       openCandidateModal(id);
@@ -1700,6 +1833,23 @@ async function runAutomationChecks() {
       await logHistory(id, `Автоматически убран с Kanban (более ${AUTOTRANSFER_DAYS} дней на этапе «${c.stage}»)`);
     }
   }
+  await applyInterviewDayTransitions();
+}
+
+// кандидат, приглашённый на собеседование заранее, стоит на этапе
+// "Приглашён на собеседование" до самого дня собеседования — в день,
+// на который оно назначено, переводим на этап "Собеседование"
+// автоматически (см. также addInterviewBtn — там та же логика на момент
+// создания собеседования, если оно назначено сразу на сегодня)
+async function applyInterviewDayTransitions() {
+  for (const [id, c] of Object.entries(state.candidates)) {
+    if (c.stage !== "Приглашён на собеседование" || !c.interviews) continue;
+    const hasInterviewToday = Object.values(c.interviews).some((iv) => !iv.result && isToday(iv.date));
+    if (hasInterviewToday) {
+      await dbUpdate(`candidates/${id}`, { stage: "Собеседование", stageChangedAt: nowISO() });
+      await logHistory(id, `Этап автоматически изменён: Приглашён на собеседование → Собеседование (день собеседования)`);
+    }
+  }
 }
 
 // ----------------------------------------------------------------
@@ -1793,6 +1943,17 @@ function initListeners() {
     state.users = data || {};
     if (!$("#view-users").classList.contains("hidden")) renderUsersTable();
   });
+
+  // на случай, если приложение остаётся открытым через полночь без каких-либо
+  // изменений в Firebase (которые иначе сами вызвали бы runAutomationChecks
+  // через dbListen("candidates", ...) выше) — подстраховка раз в 15 минут
+  setInterval(() => { applyInterviewDayTransitions(); }, 15 * 60 * 1000);
+  // подсветка "скоро" (за 15 минут до начала) зависит от текущего времени,
+  // а не от данных в Firebase — обновляем панель раз в минуту, чтобы она
+  // появлялась/пропадала вовремя, даже если ничего в базе не изменилось
+  setInterval(() => {
+    if (!$("#view-kanban").classList.contains("hidden")) renderInterviewsPanel();
+  }, 60 * 1000);
 
   openKanban(null);
 }

@@ -173,6 +173,7 @@
               <th>Создан</th>
               <th>Теги</th>
               <th>Статус</th>
+              <th>Резюме</th>
             </tr>
           </thead>
           <tbody id="candidatesTableBody"></tbody>
@@ -313,7 +314,12 @@
           <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
         </div>
 
-        <label class="field field-full"><span class="field-label">Ссылка на резюме</span><input type="url" id="cResumeLink" /></label>
+        <label class="field field-full"><span class="field-label">Ссылка на резюме</span>
+          <div class="input-with-action">
+            <input type="url" id="cResumeLink" placeholder="https://hh.ru/resume/..." />
+            <a class="input-action-btn" id="cResumeLinkOpen" href="#" target="_blank" rel="noopener noreferrer" title="Открыть резюме" aria-disabled="true">↗</a>
+          </div>
+        </label>
 
         <div class="form-row">
           <div class="field" style="flex: 0.8;">
@@ -343,13 +349,26 @@
     </div>
 
     <div class="tab-pane" data-pane="interviews">
-      <div class="interview-form-row">
-        <input type="date" id="newInterviewDate" />
-        <input type="time" id="newInterviewTime" />
-        <input type="text" id="newInterviewComment" placeholder="Комментарий" />
-        <button class="btn btn-secondary btn-tiny" id="addInterviewBtn">Назначить</button>
+      <div class="interview-next-card hidden" id="interviewNextCard">
+        <div class="interview-next-top">
+          <span class="interview-next-label" id="interviewNextLabel">Ближайшее собеседование</span>
+          <span class="interview-next-when" id="interviewNextWhen"></span>
+        </div>
+        <div class="interview-next-comment" id="interviewNextComment"></div>
+        <div class="interview-next-actions" id="interviewNextActions"></div>
       </div>
-      <div class="interview-history" id="interviewHistory"></div>
+
+      <div class="interview-schedule-card">
+        <span class="field-label">Назначить новое собеседование</span>
+        <div class="interview-form-row">
+          <input type="date" id="newInterviewDate" />
+          <input type="time" id="newInterviewTime" />
+          <input type="text" id="newInterviewComment" placeholder="Комментарий (необязательно)" />
+          <button class="btn btn-primary btn-tiny" id="addInterviewBtn">Назначить</button>
+        </div>
+      </div>
+
+      <div class="interview-timeline" id="interviewHistory"></div>
     </div>
 
     <div class="tab-pane" data-pane="history">
