@@ -72,6 +72,12 @@
       </button>
     </nav>
 
+    <button class="sidebar-bell" id="openRemindersBtn" title="Напоминания">
+      <svg class="nav-icon" viewBox="0 0 20 20"><path d="M5 8a5 5 0 0 1 10 0v3.5l1.3 2.2c.3.5-.1 1.1-.6 1.1H4.3c-.5 0-.9-.6-.6-1.1L5 11.5V8Z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/><path d="M8 16a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      <span>Напоминания</span>
+      <span class="sidebar-bell-badge hidden" id="remindersBadge">0</span>
+    </button>
+
     <button class="sidebar-settings" id="openSettingsBtn">
       <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 3v2M10 15v2M17 10h-2M5 10H3M14.6 5.4l-1.4 1.4M6.8 13.2l-1.4 1.4M14.6 14.6l-1.4-1.4M6.8 6.8 5.4 5.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       <span>Настройки</span>
@@ -259,7 +265,7 @@
       </label>
 
       <div class="form-row">
-        <label class="field"><span class="field-label">Внутренний номер телефона</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
+        <label class="field"><span class="field-label">Внутренний номер</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
         <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
         <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
       </div>
@@ -292,6 +298,7 @@
     <button class="modal-tab active" data-tab="info">Основная информация</button>
     <button class="modal-tab" data-tab="stage">Этап</button>
     <button class="modal-tab" data-tab="interviews">Собеседования</button>
+    <button class="modal-tab" data-tab="reminders">Напоминания</button>
     <button class="modal-tab" data-tab="history">История</button>
   </div>
   <div class="modal-body">
@@ -320,6 +327,21 @@
             <a class="input-action-btn" id="cResumeLinkOpen" href="#" target="_blank" rel="noopener noreferrer" title="Открыть резюме" aria-disabled="true">↗</a>
           </div>
         </label>
+
+        <div class="field field-full">
+          <span class="field-label">Анкета (PDF)</span>
+          <div class="file-attach-row" id="cQuestionnaireRow">
+            <span class="file-attach-empty" id="cQuestionnaireEmpty">Файл не загружен</span>
+            <div class="file-attach-info hidden" id="cQuestionnaireInfo">
+              <span class="file-attach-name" id="cQuestionnaireName"></span>
+              <span class="file-attach-size" id="cQuestionnaireSize"></span>
+              <button type="button" class="btn btn-tiny" id="cQuestionnaireOpenBtn">Открыть</button>
+              <button type="button" class="btn btn-tiny btn-danger" id="cQuestionnaireRemoveBtn">Удалить</button>
+            </div>
+            <label class="file-input-label file-input-label-tiny" for="cQuestionnaireFile">Загрузить PDF</label>
+            <input type="file" id="cQuestionnaireFile" accept="application/pdf" class="file-input-hidden" />
+          </div>
+        </div>
 
         <div class="form-row">
           <div class="field" style="flex: 0.8;">
@@ -369,6 +391,19 @@
       </div>
 
       <div class="interview-timeline" id="interviewHistory"></div>
+    </div>
+
+    <div class="tab-pane" data-pane="reminders">
+      <div class="interview-schedule-card">
+        <span class="field-label">Новое напоминание</span>
+        <div class="interview-form-row">
+          <input type="date" id="newCandReminderDate" />
+          <input type="time" id="newCandReminderTime" />
+          <input type="text" id="newCandReminderText" placeholder="О чём напомнить?" />
+          <button class="btn btn-primary btn-tiny" id="addCandReminderBtn">Добавить</button>
+        </div>
+      </div>
+      <div class="reminders-list" id="candRemindersList"></div>
     </div>
 
     <div class="tab-pane" data-pane="history">
@@ -501,6 +536,32 @@
   <div class="modal-footer">
     <button class="btn btn-secondary" data-close-modal="importModal">Отмена</button>
     <button class="btn btn-primary" id="confirmImportBtn">Импортировать</button>
+  </div>
+</div>
+
+<!-- напоминания -->
+<div class="modal hidden" id="remindersModal">
+  <div class="modal-header">
+    <h2>Напоминания</h2>
+    <button class="modal-close" data-close-modal="remindersModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="reminders-permission-banner hidden" id="remindersPermissionBanner">
+      <span>Чтобы напоминания приходили как уведомления на компьютер (со звуком), даже когда вкладка свёрнута — разрешите уведомления в браузере.</span>
+      <button class="btn btn-tiny btn-primary" id="enableNotificationsBtn">Включить уведомления</button>
+    </div>
+
+    <div class="interview-schedule-card">
+      <span class="field-label">Новое напоминание</span>
+      <div class="interview-form-row">
+        <input type="date" id="newReminderDate" />
+        <input type="time" id="newReminderTime" />
+        <input type="text" id="newReminderText" placeholder="О чём напомнить?" />
+        <button class="btn btn-primary btn-tiny" id="addReminderBtn">Добавить</button>
+      </div>
+    </div>
+
+    <div class="reminders-list" id="remindersList"></div>
   </div>
 </div>
 

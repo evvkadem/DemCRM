@@ -32,7 +32,6 @@ const STAGES = [
   "Отклик",
   "Скрининг",
   "Приглашён на собеседование",
-  "Анкета",
   "Собеседование",
   "Отобрано",
   "Собеседование с директором",
@@ -69,6 +68,7 @@ const state = {
   currentCandidateId: null,
   selectedCandidateIds: new Set(),
   interviewDateOffset: 0, // дней от сегодня, для панели собеседований
+  reminders: {},         // id -> напоминание
   confirmCallback: null,
   pendingTagSelection: new Set(),
   importRows: [],
@@ -360,15 +360,6 @@ function pastelClassFor(str) {
   return PASTEL_PALETTE[Math.abs(hash) % PASTEL_PALETTE.length];
 }
 
-function initialsFor(name) {
-  const parts = (name || "").trim().split(/\s+/);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "?";
-}
-
-function avatarHtml(name, sizeClass = "") {
-  return `<span class="avatar-circle ${sizeClass} ${pastelClassFor(name || "")}">${initialsFor(name)}</span>`;
-}
-
 // простая линейная иллюстрация для пустых состояний — открытая коробка
 const EMPTY_BOX_SVG = `<svg width="96" height="96" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M20 58 L38 32 H82 L100 58" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
@@ -611,7 +602,6 @@ function renderKCard(id, c) {
 
   el.innerHTML = `
     <div class="kcard-head">
-      ${avatarHtml(c.name, "avatar-circle-sm")}
       <div class="kcard-name">${escapeHtml(c.name)}</div>
     </div>
     <div class="kcard-phone">${escapeHtml(formatPhone(c.phone))}</div>
@@ -725,6 +715,7 @@ function openCandidateModal(candidateId, activeTab = "info") {
   refreshCustomSelect($("#cSource"));
   $("#cResumeLink").value = c?.resumeLink || "";
   updateResumeLinkButton();
+  renderQuestionnaireField(c);
   $("#cCreatedAt").value = c?.createdAt ? new Date(c.createdAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
   renderStatusBadges(c);
@@ -732,6 +723,7 @@ function openCandidateModal(candidateId, activeTab = "info") {
   renderStageTab(c);
   renderInterviewsTab(c, candidateId);
   renderInfoInterviewsList(c);
+  renderCandidateReminders(candidateId);
   renderNotesTab(c);
   renderHistoryTab(c);
 
@@ -1275,7 +1267,7 @@ function renderCandidatesTable() {
     ).join(" ");
     tr.innerHTML = `
       <td class="th-check"><input type="checkbox" class="row-check" data-id="${id}" ${state.selectedCandidateIds.has(id) ? "checked" : ""} /></td>
-      <td><div style="display:flex;align-items:center;gap:9px;">${avatarHtml(c.name, "avatar-circle-sm")}<span>${escapeHtml(c.name)}</span></div></td>
+      <td>${escapeHtml(c.name)}</td>
       <td>${escapeHtml(formatPhone(c.phone))}</td>
       <td>${escapeHtml(state.vacancies[c.vacancyId]?.title || "—")}</td>
       <td>${escapeHtml(c.stage || "—")}</td>
@@ -1834,6 +1826,17 @@ async function runAutomationChecks() {
     }
   }
   await applyInterviewDayTransitions();
+  await migrateRemovedAnketaStage();
+}
+
+// этап "Анкета" убран из воронки — кандидатов, которые остались на нём
+// с прошлого раза, переносим на соседний этап "Приглашён на собеседование"
+async function migrateRemovedAnketaStage() {
+  for (const [id, c] of Object.entries(state.candidates)) {
+    if (c.stage !== "Анкета") continue;
+    await dbUpdate(`candidates/${id}`, { stage: "Приглашён на собеседование", stageChangedAt: nowISO() });
+    await logHistory(id, `Этап «Анкета» удалён из воронки — кандидат перенесён на этап «Приглашён на собеседование»`);
+  }
 }
 
 // кандидат, приглашённый на собеседование заранее, стоит на этапе
@@ -1904,11 +1907,56 @@ $("#quickSearchInput").addEventListener("input", (e) => {
 
 let listenersInitialized = false;
 
+// ---------------------------------------------------------------
+// Изменяемая ширина колонок в таблице базы кандидатов — тянем за
+// правый край заголовка колонки; ширины запоминаются в localStorage
+// и восстанавливаются при следующем открытии.
+// ---------------------------------------------------------------
+function initResizableColumns(table, storageKey) {
+  if (!table) return;
+  const ths = [...table.querySelectorAll("thead th")];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch (e) { saved = {}; }
+
+  table.style.tableLayout = "fixed";
+  ths.forEach((th, i) => {
+    if (saved[i]) th.style.width = saved[i] + "px";
+    if (i === 0) return; // чекбокс-колонку не тянем — незачем
+    const handle = document.createElement("span");
+    handle.className = "col-resize-handle";
+    th.appendChild(handle);
+
+    let startX = 0, startWidth = 0;
+    const onMove = (e) => {
+      const newWidth = Math.max(60, startWidth + (e.clientX - startX));
+      th.style.width = newWidth + "px";
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("col-resizing");
+      const widths = {};
+      ths.forEach((t, idx) => { widths[idx] = t.offsetWidth; });
+      try { localStorage.setItem(storageKey, JSON.stringify(widths)); } catch (e) { /* хранилище недоступно — переживём без сохранения */ }
+    };
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startX = e.clientX;
+      startWidth = th.offsetWidth;
+      document.body.classList.add("col-resizing");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+
 function initListeners() {
   if (listenersInitialized) return;
   listenersInitialized = true;
 
   applyTheme(localStorage.getItem(THEME_KEY) || "light");
+  initResizableColumns($("#candidatesTable"), "candidatesTableColWidths");
 
   dbListen("vacancies", (data) => {
     state.vacancies = data || {};
@@ -1944,6 +1992,15 @@ function initListeners() {
     if (!$("#view-users").classList.contains("hidden")) renderUsersTable();
   });
 
+  dbListen("reminders", (data) => {
+    state.reminders = data || {};
+    checkDueReminders();
+    updateRemindersBadge();
+    if (!$("#remindersModal").classList.contains("hidden")) renderRemindersModal();
+    if (!$("#candidateModal").classList.contains("hidden") && state.currentCandidateId) renderCandidateReminders(state.currentCandidateId);
+  });
+  updateRemindersPermissionBanner();
+
   // на случай, если приложение остаётся открытым через полночь без каких-либо
   // изменений в Firebase (которые иначе сами вызвали бы runAutomationChecks
   // через dbListen("candidates", ...) выше) — подстраховка раз в 15 минут
@@ -1954,6 +2011,10 @@ function initListeners() {
   setInterval(() => {
     if (!$("#view-kanban").classList.contains("hidden")) renderInterviewsPanel();
   }, 60 * 1000);
+  // время наступления напоминания тоже не зависит от изменений в базе —
+  // проверяем каждые 20 секунд, чтобы уведомление пришло вовремя, даже
+  // если никто ничего не редактировал
+  setInterval(() => { checkDueReminders(); updateRemindersBadge(); }, 20 * 1000);
 
   openKanban(null);
 }
@@ -2055,3 +2116,293 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCusto
 document.addEventListener("DOMContentLoaded", initCustomSelects);
 // на случай, если DOMContentLoaded уже прошёл к моменту загрузки модуля
 if (document.readyState !== "loading") initCustomSelects();
+
+// ----------------------------------------------------------------
+// 18. НАПОМИНАНИЯ И PC-УВЕДОМЛЕНИЯ
+// ----------------------------------------------------------------
+// напоминания хранятся в отдельном узле "reminders" (не внутри
+// candidates), чтобы не раздувать основной листенер кандидатов
+
+// короткий двухтональный сигнал через Web Audio — без внешних
+// файлов (значит бесплатно и работает даже офлайн)
+function playReminderSound() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const note = (freq, start, dur, peak) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+      g.gain.exponentialRampToValueAtTime(peak, ctx.currentTime + start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + start + dur + 0.05);
+    };
+    note(880, 0, 0.32, 0.22);
+    note(1320, 0.12, 0.38, 0.18);
+    setTimeout(() => ctx.close(), 900);
+  } catch (e) { /* Web Audio недоступен в этом браузере — переживём без звука */ }
+}
+
+function notificationsSupported() { return "Notification" in window; }
+function notificationsGranted() { return notificationsSupported() && Notification.permission === "granted"; }
+
+async function requestNotificationPermission() {
+  if (!notificationsSupported()) { toast("Этот браузер не поддерживает уведомления", true); return false; }
+  if (Notification.permission === "granted") return true;
+  const res = await Notification.requestPermission();
+  updateRemindersPermissionBanner();
+  if (res !== "granted") toast("Уведомления не разрешены — напоминания будут показаны только внутри приложения", true);
+  return res === "granted";
+}
+
+// полноценное системное уведомление на ПК + звук; клик по нему
+// возвращает фокус на вкладку и открывает связанного кандидата
+function fireReminderNotification(reminder) {
+  playReminderSound();
+  if (!notificationsGranted()) return;
+  try {
+    const n = new Notification("Напоминание — DemCRM", {
+      body: reminder.text + (reminder.candidateName ? `\n${reminder.candidateName}` : ""),
+      tag: "reminder-" + reminder.id,
+      requireInteraction: true,
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+      if (reminder.candidateId) openCandidateModal(reminder.candidateId, "reminders");
+      else openModal("remindersModal");
+    };
+  } catch (e) { /* конструктор Notification недоступен (например, в iframe) */ }
+}
+
+function updateRemindersPermissionBanner() {
+  const banner = $("#remindersPermissionBanner");
+  if (!banner) return;
+  banner.classList.toggle("hidden", !notificationsSupported() || notificationsGranted());
+}
+$("#enableNotificationsBtn")?.addEventListener("click", requestNotificationPermission);
+
+async function addReminder({ candidateId, candidateName, text, date, time }) {
+  if (!text || !date) { toast("Укажите дату и текст напоминания", true); return; }
+  const datetime = `${date}T${time || "09:00"}`;
+  await dbPush("reminders", {
+    candidateId: candidateId || null,
+    candidateName: candidateName || null,
+    text,
+    datetime,
+    done: false,
+    notifiedAt: null,
+    createdAt: nowISO(),
+  });
+  toast("Напоминание добавлено");
+}
+
+async function toggleReminderDone(id, done) {
+  await dbUpdate(`reminders/${id}`, { done });
+}
+
+async function deleteReminder(id) {
+  await dbRemove(`reminders/${id}`);
+}
+
+// раз в 20 секунд проверяем, не наступило ли время напоминания —
+// не чаще, чтобы не грузить бесплатный тариф лишними чтениями,
+// но достаточно часто, чтобы уведомление пришло вовремя
+function checkDueReminders() {
+  const now = Date.now();
+  Object.entries(state.reminders).forEach(([id, r]) => {
+    if (r.done || r.notifiedAt) return;
+    if (new Date(r.datetime).getTime() <= now) {
+      fireReminderNotification({ ...r, id });
+      dbUpdate(`reminders/${id}`, { notifiedAt: nowISO() });
+    }
+  });
+}
+
+function formatReminderWhen(datetime) {
+  const [date, time] = datetime.split("T");
+  return `${formatDate(date)}${time ? ", " + time : ""}`;
+}
+
+function reminderRowHtml(id, r) {
+  const overdue = !r.done && new Date(r.datetime).getTime() <= Date.now();
+  return `
+    <div class="reminder-row ${r.done ? "is-done" : ""} ${overdue ? "is-overdue" : ""}" data-id="${id}">
+      <input type="checkbox" class="reminder-check" ${r.done ? "checked" : ""} />
+      <div class="reminder-row-body">
+        <div class="reminder-row-text">${escapeHtml(r.text)}</div>
+        <div class="reminder-row-meta">${formatReminderWhen(r.datetime)}${r.candidateName ? ` · ${escapeHtml(r.candidateName)}` : ""}</div>
+      </div>
+      <button type="button" class="reminder-row-delete" title="Удалить">✕</button>
+    </div>
+  `;
+}
+
+function wireReminderRowEvents(container) {
+  $all(".reminder-row", container).forEach((row) => {
+    const id = row.dataset.id;
+    $(".reminder-check", row).addEventListener("change", (e) => toggleReminderDone(id, e.target.checked));
+    $(".reminder-row-delete", row).addEventListener("click", () => deleteReminder(id));
+    if (!state.reminders[id]?.candidateId) return;
+    $(".reminder-row-text", row).style.cursor = "pointer";
+    $(".reminder-row-text", row).addEventListener("click", () => {
+      closeModal("remindersModal");
+      openCandidateModal(state.reminders[id].candidateId, "reminders");
+    });
+  });
+}
+
+// глобальный список — модалка из сайдбара, все напоминания сразу
+function renderRemindersModal() {
+  updateRemindersPermissionBanner();
+  const list = $("#remindersList");
+  const entries = Object.entries(state.reminders).sort((a, b) => new Date(a[1].datetime) - new Date(b[1].datetime));
+  if (!entries.length) {
+    list.innerHTML = `<div class="interviews-empty">Напоминаний пока нет</div>`;
+    return;
+  }
+  list.innerHTML = entries.map(([id, r]) => reminderRowHtml(id, r)).join("");
+  wireReminderRowEvents(list);
+}
+
+// список в карточке конкретного кандидата — вкладка "Напоминания"
+function renderCandidateReminders(candidateId) {
+  const list = $("#candRemindersList");
+  if (!list) return;
+  if (!candidateId) {
+    list.innerHTML = `<div class="interviews-empty">Сначала сохраните кандидата</div>`;
+    return;
+  }
+  const entries = Object.entries(state.reminders)
+    .filter(([, r]) => r.candidateId === candidateId)
+    .sort((a, b) => new Date(a[1].datetime) - new Date(b[1].datetime));
+  if (!entries.length) {
+    list.innerHTML = `<div class="interviews-empty">Напоминаний по этому кандидату нет</div>`;
+    return;
+  }
+  list.innerHTML = entries.map(([id, r]) => reminderRowHtml(id, r)).join("");
+  wireReminderRowEvents(list);
+}
+
+function updateRemindersBadge() {
+  const badge = $("#remindersBadge");
+  if (!badge) return;
+  const dueCount = Object.values(state.reminders).filter((r) => !r.done && new Date(r.datetime).getTime() <= Date.now()).length;
+  badge.textContent = dueCount;
+  badge.classList.toggle("hidden", dueCount === 0);
+}
+
+$("#openRemindersBtn").addEventListener("click", () => { renderRemindersModal(); openModal("remindersModal"); });
+
+$("#addReminderBtn").addEventListener("click", async () => {
+  await addReminder({
+    text: $("#newReminderText").value.trim(),
+    date: $("#newReminderDate").value,
+    time: $("#newReminderTime").value,
+  });
+  $("#newReminderText").value = ""; $("#newReminderDate").value = ""; $("#newReminderTime").value = "";
+  renderRemindersModal();
+});
+
+$("#addCandReminderBtn").addEventListener("click", async () => {
+  const candidateId = state.currentCandidateId;
+  if (!candidateId) { toast("Сначала сохраните кандидата", true); return; }
+  const c = state.candidates[candidateId];
+  await addReminder({
+    candidateId,
+    candidateName: c?.name || "",
+    text: $("#newCandReminderText").value.trim(),
+    date: $("#newCandReminderDate").value,
+    time: $("#newCandReminderTime").value,
+  });
+  $("#newCandReminderText").value = ""; $("#newCandReminderDate").value = ""; $("#newCandReminderTime").value = "";
+  renderCandidateReminders(candidateId);
+});
+
+// ----------------------------------------------------------------
+// 19. АНКЕТА (PDF) — хранение в Realtime Database
+// ----------------------------------------------------------------
+// Firebase Storage на бесплатном тарифе Spark с 2024 года требует
+// привязки карты (тариф Blaze), поэтому вместо него анкету храним
+// прямо в Realtime Database как base64: это гарантированно бесплатно
+// и не требует смены тарифа. Чтобы не раздувать основной листенер
+// кандидатов (там base64 грузился бы для ВСЕХ кандидатов сразу на
+// каждый чих), сам файл лежит отдельным узлом candidateFiles/{id} и
+// подгружается по требованию (по клику "Открыть"), а в самой
+// карточке кандидата хранятся только лёгкие метаданные (имя, размер).
+const QUESTIONNAIRE_MAX_BYTES = 4 * 1024 * 1024; // 4 МБ до кодирования в base64
+
+function formatFileSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " КБ";
+  return (bytes / (1024 * 1024)).toFixed(1) + " МБ";
+}
+
+function renderQuestionnaireField(c) {
+  const meta = c?.questionnaireFile;
+  $("#cQuestionnaireEmpty").classList.toggle("hidden", !!meta);
+  $("#cQuestionnaireInfo").classList.toggle("hidden", !meta);
+  if (meta) {
+    $("#cQuestionnaireName").textContent = meta.name;
+    $("#cQuestionnaireSize").textContent = formatFileSize(meta.size);
+  }
+}
+
+$("#cQuestionnaireFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const candidateId = state.currentCandidateId;
+  if (!candidateId) { toast("Сначала сохраните кандидата", true); return; }
+  if (file.type !== "application/pdf") { toast("Нужен файл в формате PDF", true); return; }
+  if (file.size > QUESTIONNAIRE_MAX_BYTES) { toast(`Файл слишком большой (максимум ${formatFileSize(QUESTIONNAIRE_MAX_BYTES)})`, true); return; }
+
+  toast("Загружаем анкету...");
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    await dbSet(`candidateFiles/${candidateId}`, { dataUrl, uploadedAt: nowISO() });
+    const meta = { name: file.name, size: file.size, uploadedAt: nowISO() };
+    await dbUpdate(`candidates/${candidateId}`, { questionnaireFile: meta });
+    await logHistory(candidateId, `Загружена анкета: ${file.name}`);
+    renderQuestionnaireField(state.candidates[candidateId]);
+    toast("Анкета загружена");
+  } catch (err) {
+    toast("Не удалось загрузить файл", true);
+  }
+});
+
+$("#cQuestionnaireOpenBtn").addEventListener("click", async () => {
+  const candidateId = state.currentCandidateId;
+  if (!candidateId) return;
+  toast("Открываем...");
+  try {
+    const file = await dbGet(`candidateFiles/${candidateId}`);
+    if (!file?.dataUrl) { toast("Файл не найден (возможно, был удалён)", true); return; }
+    const blob = await (await fetch(file.dataUrl)).blob();
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  } catch (err) {
+    toast("Не удалось открыть файл", true);
+  }
+});
+
+$("#cQuestionnaireRemoveBtn").addEventListener("click", async () => {
+  const candidateId = state.currentCandidateId;
+  if (!candidateId) return;
+  await dbRemove(`candidateFiles/${candidateId}`);
+  await dbUpdate(`candidates/${candidateId}`, { questionnaireFile: null });
+  await logHistory(candidateId, "Анкета удалена");
+  renderQuestionnaireField(state.candidates[candidateId]);
+  toast("Анкета удалена");
+});
