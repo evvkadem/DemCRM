@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DemCRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- ЭКРАН АВТОРИЗАЦИИ                                             -->
+<!-- ============================================================ -->
+<div id="loginScreen" class="login-screen">
+  <form id="loginForm" class="login-card">
+    <div class="login-logo">DemCRM</div>
+    <p class="login-sub">войдите, чтобы продолжить</p>
+
+    <label class="field">
+      <span class="field-label">Email</span>
+      <input type="email" id="loginEmail" required autocomplete="username" />
+    </label>
+
+    <label class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" id="loginPassword" required autocomplete="current-password" />
+    </label>
+
+    <label class="checkbox-field">
+      <input type="checkbox" id="loginRemember" checked />
+      <span>Запомнить меня</span>
+    </label>
+
+    <div id="loginError" class="form-error hidden"></div>
+
+    <button type="submit" class="btn btn-primary btn-block">Войти</button>
+  </form>
+</div>
+
+<!-- ============================================================ -->
+<!-- ОСНОВНОЕ ПРИЛОЖЕНИЕ                                           -->
+<!-- ============================================================ -->
+<div id="app" class="app hidden">
+
+  <!-- боковая панель -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">DemCRM</div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item" data-view="vacancies">
+        <svg class="nav-icon" viewBox="0 0 20 20"><path d="M4 7h12v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 7V5.5A1.5 1.5 0 0 1 8.5 4h3A1.5 1.5 0 0 1 13 5.5V7" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span>Вакансии</span>
+      </button>
+      <button class="nav-item" data-view="kanban">
+        <svg class="nav-icon" viewBox="0 0 20 20"><rect x="3" y="4" width="4" height="12" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="8" y="4" width="4" height="8" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="13" y="4" width="4" height="10" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span>Kanban</span>
+      </button>
+      <button class="nav-item" data-view="candidates">
+        <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="10" cy="7" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 17c0-3 2.5-5 6-5s6 2 6 5" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        <span>База кандидатов</span>
+      </button>
+      <button class="nav-item" data-view="analytics">
+        <svg class="nav-icon" viewBox="0 0 20 20"><path d="M4 16V9M10 16V4M16 16v-6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+        <span>Аналитика</span>
+      </button>
+      <button class="nav-item" data-view="users" data-admin-only>
+        <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="7" cy="7" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="14" cy="8" r="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M3 16c0-2.5 2-4 4.5-4S12 13.5 12 16M12.5 12.5c2 0 3.5 1.3 3.5 3.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+        <span>Пользователи</span>
+      </button>
+    </nav>
+
+    <button class="sidebar-bell" id="openRemindersBtn" title="Напоминания">
+      <svg class="nav-icon" viewBox="0 0 20 20"><path d="M5 8a5 5 0 0 1 10 0v3.5l1.3 2.2c.3.5-.1 1.1-.6 1.1H4.3c-.5 0-.9-.6-.6-1.1L5 11.5V8Z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/><path d="M8 16a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+      <span>Напоминания</span>
+      <span class="sidebar-bell-badge hidden" id="remindersBadge">0</span>
+    </button>
+
+    <button class="sidebar-settings" id="openSettingsBtn">
+      <svg class="nav-icon" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 3v2M10 15v2M17 10h-2M5 10H3M14.6 5.4l-1.4 1.4M6.8 13.2l-1.4 1.4M14.6 14.6l-1.4-1.4M6.8 6.8 5.4 5.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span>Настройки</span>
+    </button>
+  </aside>
+
+  <!-- основная область -->
+  <main class="main">
+
+    <!-- ---------------- ВАКАНСИИ ---------------- -->
+    <section id="view-vacancies" class="view">
+      <header class="view-header">
+        <div class="view-header-top">
+          <h1>Вакансии</h1>
+        </div>
+        <div class="view-header-actions">
+          <input type="search" class="search-input" id="vacancySearch" placeholder="Поиск по названию или руководителю" />
+          <select class="select-input js-enhance" id="vacancyFilter">
+            <option value="active" selected>Статус: активные</option>
+            <option value="paused">Статус: приостановленные</option>
+            <option value="closed">Статус: закрытые</option>
+            <option value="all">Статус: все</option>
+          </select>
+          <button class="btn btn-primary" id="addVacancyBtn">+ Добавить вакансию</button>
+        </div>
+      </header>
+      <div class="vacancy-grid" id="vacancyGrid"></div>
+      <div class="empty-state hidden" id="vacancyEmpty">
+        <div id="vacancyEmptyIllustration"></div>
+        <p>Вакансий пока нет</p>
+        <span>Нажмите «Добавить вакансию», чтобы начать</span>
+      </div>
+    </section>
+
+    <!-- ---------------- KANBAN ---------------- -->
+    <section id="view-kanban" class="view hidden">
+      <header class="view-header">
+        <div class="view-header-top">
+          <h1>Kanban</h1>
+        </div>
+        <div class="view-header-actions">
+          <select class="select-input js-enhance" id="kanbanVacancyScope"><option value="">Все вакансии</option></select>
+          <button class="btn btn-primary" id="addCandidateBtn">+ Добавить кандидата</button>
+        </div>
+      </header>
+
+      <div class="kanban-layout">
+        <!-- блок собеседований -->
+        <div class="interviews-panel" id="interviewsPanel">
+          <div class="interviews-panel-header">
+            <button class="icon-btn" id="interviewPrevDay">‹</button>
+            <span id="interviewsDateLabel">Сегодня</span>
+            <button class="icon-btn" id="interviewNextDay">›</button>
+          </div>
+          <div class="interviews-list" id="interviewsList"></div>
+        </div>
+
+        <!-- доска -->
+        <div class="kanban-board" id="kanbanBoard"></div>
+      </div>
+    </section>
+
+    <!-- ---------------- БАЗА КАНДИДАТОВ ---------------- -->
+    <section id="view-candidates" class="view hidden">
+      <header class="view-header">
+        <div class="view-header-top">
+          <h1>База кандидатов</h1>
+        </div>
+        <div class="view-header-actions" id="candidateFilters">
+          <input type="search" class="search-input" id="candidateSearch" placeholder="ФИО, телефон, вакансия" />
+          <select class="select-input js-enhance" id="filterVacancy"><option value="">Вакансия: все</option></select>
+          <select class="select-input js-enhance" id="filterStage"><option value="">Этап: все</option></select>
+          <select class="select-input js-enhance" id="filterSource"><option value="">Источник: все</option></select>
+          <select class="select-input js-enhance" id="filterStatus"><option value="">Статус: все</option></select>
+          <button class="btn btn-primary" id="importBtn">+ Импорт</button>
+        </div>
+      </header>
+
+      <div class="bulk-bar hidden" id="bulkBar">
+        <span id="bulkCount">0 выбрано</span>
+        <button class="btn btn-tiny" id="bulkTagBtn">Добавить тег</button>
+        <button class="btn btn-tiny" id="bulkStageBtn">Изменить этап</button>
+        <button class="btn btn-tiny" id="bulkVacancyBtn">Изменить вакансию</button>
+        <button class="btn btn-tiny" id="bulkKanbanOffBtn">Убрать с Kanban</button>
+        <button class="btn btn-tiny" id="bulkReturnBtn">Вернуть в Kanban</button>
+        <button class="btn btn-tiny btn-danger" id="bulkDeleteBtn">Удалить</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="candidatesTable">
+          <thead>
+            <tr>
+              <th class="th-check"><input type="checkbox" id="selectAllCandidates" /></th>
+              <th>ФИО</th>
+              <th>Телефон</th>
+              <th>Вакансия</th>
+              <th>Этап</th>
+              <th>Источник</th>
+              <th>Создан</th>
+              <th>Теги</th>
+              <th>Статус</th>
+              <th>Резюме</th>
+            </tr>
+          </thead>
+          <tbody id="candidatesTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---------------- АНАЛИТИКА ---------------- -->
+    <section id="view-analytics" class="view hidden">
+      <header class="view-header">
+        <div class="view-header-top">
+          <h1>Аналитика</h1>
+        </div>
+        <div class="view-header-actions">
+          <select class="select-input js-enhance" id="analyticsScope"><option value="all">Вся CRM</option></select>
+          <div class="segmented" id="analyticsPeriod">
+            <button class="segmented-item" data-period="day">День</button>
+            <button class="segmented-item" data-period="week">Неделя</button>
+            <button class="segmented-item active" data-period="month">Месяц</button>
+            <button class="segmented-item" data-period="year">Год</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="stat-grid" id="statGrid"></div>
+
+      <div class="panel">
+        <h2 class="panel-title">Воронка конверсии</h2>
+        <div class="funnel" id="funnel"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Среднее время закрытия вакансии</h2>
+        <div class="panel-value" id="avgCloseTime">—</div>
+      </div>
+    </section>
+
+    <!-- ---------------- ПОЛЬЗОВАТЕЛИ ---------------- -->
+    <section id="view-users" class="view hidden">
+      <header class="view-header">
+        <div class="view-header-top">
+          <h1>Пользователи</h1>
+        </div>
+        <div class="view-header-actions">
+          <button class="btn btn-primary" id="addUserBtn">+ Создать пользователя</button>
+        </div>
+      </header>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Имя</th><th>Email</th><th>Роль</th><th></th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============================================================ -->
+<!-- МОДАЛЬНЫЕ ОКНА                                                -->
+<!-- ============================================================ -->
+
+<div class="modal-overlay hidden" id="overlay"></div>
+
+<!-- вакансия: создание/редактирование -->
+<div class="modal hidden" id="vacancyModal">
+  <div class="modal-header">
+    <h2 id="vacancyModalTitle">Новая вакансия</h2>
+    <button class="modal-close" data-close-modal="vacancyModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <form id="vacancyForm" class="form-grid">
+      <label class="field field-full"><span class="field-label">Название вакансии *</span><input type="text" id="vTitle" required /></label>
+
+      <div class="form-row">
+        <label class="field"><span class="field-label">Руководитель отдела *</span>
+          <select id="vManager" class="js-enhance" required></select>
+        </label>
+        <label class="field"><span class="field-label">Телефон руководителя</span><input type="tel" id="vManagerPhone" placeholder="7 999 999-99-99" /></label>
+      </div>
+      <label class="field field-full hidden" id="vManagerNewWrap">
+        <span class="field-label">Имя нового руководителя *</span><input type="text" id="vManagerNewName" placeholder="Введите имя" />
+      </label>
+
+      <div class="form-row">
+        <label class="field"><span class="field-label">Внутренний номер</span><input type="text" id="vInternalPhone" placeholder="напр. 1042" /></label>
+        <label class="field"><span class="field-label">Дата открытия</span><input type="date" id="vOpenDate" /></label>
+        <label class="field"><span class="field-label">Дата закрытия</span><input type="date" id="vCloseDate" /></label>
+      </div>
+
+      <div class="form-row">
+        <label class="field"><span class="field-label">Потребность *</span><input type="number" id="vSlots" min="1" required /></label>
+        <label class="field"><span class="field-label">Статус</span>
+          <select id="vStatus" class="js-enhance"><option value="active">Активна</option><option value="paused">Приостановлена</option><option value="closed">Закрыта</option></select>
+        </label>
+      </div>
+
+      <label class="field field-full"><span class="field-label">Комментарий</span><textarea id="vComment" rows="2"></textarea></label>
+    </form>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-danger hidden" id="deleteVacancyBtn">Удалить</button>
+    <button class="btn btn-secondary hidden" id="openVacancyKanbanBtn">Открыть Kanban</button>
+    <button class="btn btn-secondary" data-close-modal="vacancyModal">Отмена</button>
+    <button class="btn btn-primary" id="saveVacancyBtn">Сохранить</button>
+  </div>
+</div>
+
+<!-- карточка кандидата -->
+<div class="modal modal-large hidden" id="candidateModal">
+  <div class="modal-header">
+    <h2 id="candidateModalTitle">Кандидат</h2>
+    <button class="modal-close" data-close-modal="candidateModal">✕</button>
+  </div>
+  <div class="modal-tabs" id="candidateTabs">
+    <button class="modal-tab active" data-tab="info">Основная информация</button>
+    <button class="modal-tab" data-tab="stage">Этап</button>
+    <button class="modal-tab" data-tab="interviews">Собеседования</button>
+    <button class="modal-tab" data-tab="reminders">Напоминания</button>
+    <button class="modal-tab" data-tab="history">История</button>
+  </div>
+  <div class="modal-body">
+
+    <div class="tab-pane active" data-pane="info">
+      <div class="status-badges" id="statusBadges"></div>
+      <form id="candidateForm" class="form-grid">
+        <div class="form-row">
+          <label class="field"><span class="field-label">ФИО *</span><input type="text" id="cName" required /></label>
+          <label class="field"><span class="field-label">Телефон *</span><input type="tel" id="cPhone" required placeholder="7 999 999-99-99" /></label>
+        </div>
+
+        <div class="form-row">
+          <label class="field"><span class="field-label">Вакансия *</span>
+            <select id="cVacancy" class="js-enhance" required></select>
+          </label>
+          <label class="field"><span class="field-label">Источник *</span>
+            <select id="cSource" class="js-enhance" required><option value="hh">hh</option><option value="avito">авито</option><option value="other">другое</option></select>
+          </label>
+          <label class="field"><span class="field-label">Дата добавления</span><input type="date" id="cCreatedAt" /></label>
+        </div>
+
+        <label class="field field-full"><span class="field-label">Ссылка на резюме</span>
+          <div class="input-with-action">
+            <input type="url" id="cResumeLink" placeholder="https://hh.ru/resume/..." />
+            <a class="input-action-btn" id="cResumeLinkOpen" href="#" target="_blank" rel="noopener noreferrer" title="Открыть резюме" aria-disabled="true">↗</a>
+          </div>
+        </label>
+
+        <div class="field field-full">
+          <span class="field-label">Анкета (PDF)</span>
+          <div class="file-attach-row" id="cQuestionnaireRow">
+            <span class="file-attach-empty" id="cQuestionnaireEmpty">Файл не загружен</span>
+            <div class="file-attach-info hidden" id="cQuestionnaireInfo">
+              <span class="file-attach-name" id="cQuestionnaireName"></span>
+              <span class="file-attach-size" id="cQuestionnaireSize"></span>
+              <button type="button" class="btn btn-tiny" id="cQuestionnaireOpenBtn">Открыть</button>
+              <button type="button" class="btn btn-tiny btn-danger" id="cQuestionnaireRemoveBtn">Удалить</button>
+            </div>
+            <label class="file-input-label file-input-label-tiny" for="cQuestionnaireFile">Загрузить PDF</label>
+            <input type="file" id="cQuestionnaireFile" accept="application/pdf" class="file-input-hidden" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field" style="flex: 0.8;">
+            <span class="field-label">Теги</span>
+            <div class="tag-picker" id="cTagPicker"></div>
+          </div>
+          <div class="field" style="flex: 1.2;">
+            <span class="field-label">Собеседования</span>
+            <div class="interview-history" id="infoInterviewsList"></div>
+          </div>
+        </div>
+      </form>
+      <div class="duplicate-warning hidden" id="duplicateWarning"></div>
+
+      <div class="info-subsection">
+        <span class="field-label">Заметки</span>
+        <div class="notes-list" id="notesList"></div>
+        <div class="note-form-row">
+          <textarea id="newNoteText" rows="2" placeholder="Новая заметка..."></textarea>
+          <button class="btn btn-secondary btn-tiny" id="addNoteBtn">Добавить</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" data-pane="stage">
+      <div class="stage-list" id="stageList"></div>
+    </div>
+
+    <div class="tab-pane" data-pane="interviews">
+      <div class="interview-next-card hidden" id="interviewNextCard">
+        <div class="interview-next-top">
+          <span class="interview-next-label" id="interviewNextLabel">Ближайшее собеседование</span>
+          <span class="interview-next-when" id="interviewNextWhen"></span>
+        </div>
+        <div class="interview-next-comment" id="interviewNextComment"></div>
+        <div class="interview-next-actions" id="interviewNextActions"></div>
+      </div>
+
+      <div class="interview-schedule-card">
+        <span class="field-label">Назначить новое собеседование</span>
+        <div class="interview-form-row">
+          <input type="date" id="newInterviewDate" />
+          <input type="time" id="newInterviewTime" />
+          <input type="text" id="newInterviewComment" placeholder="Комментарий (необязательно)" />
+          <button class="btn btn-primary btn-tiny" id="addInterviewBtn">Назначить</button>
+        </div>
+      </div>
+
+      <div class="interview-timeline" id="interviewHistory"></div>
+    </div>
+
+    <div class="tab-pane" data-pane="reminders">
+      <div class="interview-schedule-card">
+        <span class="field-label">Новое напоминание</span>
+        <div class="interview-form-row">
+          <input type="date" id="newCandReminderDate" />
+          <input type="time" id="newCandReminderTime" />
+          <input type="text" id="newCandReminderText" placeholder="О чём напомнить?" />
+          <button class="btn btn-primary btn-tiny" id="addCandReminderBtn">Добавить</button>
+        </div>
+      </div>
+      <div class="reminders-list" id="candRemindersList"></div>
+    </div>
+
+    <div class="tab-pane" data-pane="history">
+      <div class="history-list" id="historyList"></div>
+    </div>
+
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-danger" id="deleteCandidateBtn">Удалить кандидата</button>
+    <button class="btn btn-primary" id="saveCandidateBtn">Сохранить</button>
+  </div>
+</div>
+
+<!-- подтверждение -->
+<div class="modal modal-small hidden" id="confirmModal">
+  <div class="modal-body">
+    <p id="confirmText">Вы уверены?</p>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" id="confirmCancelBtn">Отмена</button>
+    <button class="btn btn-danger" id="confirmOkBtn">Продолжить</button>
+  </div>
+</div>
+
+<!-- выбор из списка (для массовых действий в базе кандидатов) -->
+<div class="modal modal-small hidden" id="choiceModal">
+  <div class="modal-header">
+    <h2 id="choiceModalTitle">Выберите значение</h2>
+    <button class="modal-close" data-close-modal="choiceModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="choice-list" id="choiceList"></div>
+  </div>
+</div>
+
+<!-- настройки -->
+<div class="modal hidden" id="settingsModal">
+  <div class="modal-header">
+    <h2>Настройки</h2>
+    <button class="modal-close" data-close-modal="settingsModal">✕</button>
+  </div>
+  <div class="modal-tabs" id="settingsTabs">
+    <button class="modal-tab active" data-settings-tab="profile">Профиль</button>
+    <button class="modal-tab" data-settings-tab="appearance">Внешний вид</button>
+    <button class="modal-tab" data-settings-tab="tags">Справочники</button>
+  </div>
+  <div class="modal-body">
+    <div class="tab-pane active" data-settings-pane="profile">
+      <form class="form-grid" id="profileForm">
+        <label class="field"><span class="field-label">Имя</span><input type="text" id="profileName" /></label>
+        <label class="field"><span class="field-label">Email</span><input type="email" id="profileEmail" disabled /></label>
+        <label class="field field-full"><span class="field-label">Новый пароль</span><input type="password" id="profileNewPassword" placeholder="оставьте пустым, если не меняете" /></label>
+      </form>
+      <button class="btn btn-primary btn-tiny" id="saveProfileBtn">Сохранить</button>
+    </div>
+    <div class="tab-pane" data-settings-pane="appearance">
+      <div class="theme-picker">
+        <button class="theme-option active" data-theme="light">
+          <span class="theme-preview theme-preview-light">
+            <span class="theme-preview-sidebar"></span>
+            <span class="theme-preview-content">
+              <span class="theme-preview-card"></span>
+              <span class="theme-preview-card"></span>
+            </span>
+          </span>
+          <span class="theme-option-label">Светлая</span>
+        </button>
+        <button class="theme-option" data-theme="dark">
+          <span class="theme-preview theme-preview-dark">
+            <span class="theme-preview-sidebar"></span>
+            <span class="theme-preview-content">
+              <span class="theme-preview-card"></span>
+              <span class="theme-preview-card"></span>
+            </span>
+          </span>
+          <span class="theme-option-label">Тёмная</span>
+        </button>
+      </div>
+      <button class="btn btn-secondary btn-tiny" id="resetInterfaceBtn">Сбросить настройки интерфейса</button>
+    </div>
+    <div class="tab-pane" data-settings-pane="tags">
+      <div class="tags-manager" id="tagsManager"></div>
+      <div class="tag-form-row">
+        <input type="text" id="newTagName" placeholder="Название тега" />
+        <div class="color-swatches" id="newTagColorSwatches"></div>
+        <button class="btn btn-secondary btn-tiny" id="addTagBtn">Добавить тег</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- создание пользователя -->
+<div class="modal modal-small hidden" id="userModal">
+  <div class="modal-header">
+    <h2>Новый пользователь</h2>
+    <button class="modal-close" data-close-modal="userModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <form class="form-grid" id="userForm">
+      <label class="field field-full"><span class="field-label">Имя</span><input type="text" id="uName" required /></label>
+      <label class="field field-full"><span class="field-label">Email</span><input type="email" id="uEmail" required /></label>
+      <label class="field field-full"><span class="field-label">Пароль</span><input type="password" id="uPassword" required minlength="6" /></label>
+      <label class="field field-full"><span class="field-label">Роль</span>
+        <select id="uRole" class="js-enhance"><option value="recruiter">Рекрутер</option><option value="admin">Администратор</option></select>
+      </label>
+    </form>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" data-close-modal="userModal">Отмена</button>
+    <button class="btn btn-primary" id="saveUserBtn">Создать</button>
+  </div>
+</div>
+
+<!-- импорт -->
+<div class="modal hidden" id="importModal">
+  <div class="modal-header">
+    <h2>Импорт кандидатов</h2>
+    <button class="modal-close" data-close-modal="importModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <p class="import-hint">Загрузите файл Excel/CSV или вставьте таблицу из буфера обмена (Ctrl+V). Ожидаемые колонки: ФИО, Телефон, Вакансия, Источник, Дата добавления, Ссылка на резюме.</p>
+    <div class="file-input-row">
+      <label class="file-input-label" for="importFile">Выбрать файл</label>
+      <span class="file-input-name" id="importFileName">Файл не выбран</span>
+      <input type="file" id="importFile" accept=".csv,.xlsx,.xls" class="file-input-hidden" />
+    </div>
+    <textarea id="importPasteArea" rows="8" placeholder="Вставьте сюда данные из Excel..."></textarea>
+    <div id="importPreview" class="import-preview"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" data-close-modal="importModal">Отмена</button>
+    <button class="btn btn-primary" id="confirmImportBtn">Импортировать</button>
+  </div>
+</div>
+
+<!-- напоминания -->
+<div class="modal hidden" id="remindersModal">
+  <div class="modal-header">
+    <h2>Напоминания</h2>
+    <button class="modal-close" data-close-modal="remindersModal">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="reminders-permission-banner hidden" id="remindersPermissionBanner">
+      <span>Чтобы напоминания приходили как уведомления на компьютер (со звуком), даже когда вкладка свёрнута — разрешите уведомления в браузере.</span>
+      <button class="btn btn-tiny btn-primary" id="enableNotificationsBtn">Включить уведомления</button>
+    </div>
+
+    <div class="interview-schedule-card">
+      <span class="field-label">Новое напоминание</span>
+      <div class="interview-form-row">
+        <input type="date" id="newReminderDate" />
+        <input type="time" id="newReminderTime" />
+        <input type="text" id="newReminderText" placeholder="О чём напомнить?" />
+        <button class="btn btn-primary btn-tiny" id="addReminderBtn">Добавить</button>
+      </div>
+    </div>
+
+    <div class="reminders-list" id="remindersList"></div>
+  </div>
+</div>
+
+<!-- тост-уведомления -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- глобальный поиск Ctrl+K -->
+<div class="modal modal-search hidden" id="quickSearchModal">
+  <input type="text" id="quickSearchInput" placeholder="Поиск кандидатов, вакансий..." />
+  <div class="quick-search-results" id="quickSearchResults"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module" src="script.js"></script>
+</body>
+</html>
